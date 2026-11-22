@@ -36,3 +36,27 @@ func TestFindAcceptsANativeExe(t *testing.T) {
 		t.Errorf("Find(%q) = %q, %v", exe, got, err)
 	}
 }
+
+// Windows drops trailing dots and spaces from a file name, so claude.cmd. and
+// "claude.cmd " are claude.cmd. A PATHEXT entry with a trailing dot or space
+// makes Go's PATH lookup return such a name.
+func TestFindRefusesABatchFileNamedWithTrailingDotsOrSpaces(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude.cmd")
+	if err := os.WriteFile(script, []byte("@echo off\r\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+
+	for _, pathext := range []string{".CMD.", ".CMD ", ".cmd. .", ".BAT;.CMD  "} {
+		t.Setenv("PATHEXT", pathext)
+		if got, err := Find("claude"); err == nil {
+			t.Errorf("PATHEXT=%q: Find = %q, want a refusal", pathext, got)
+		}
+	}
+	for _, named := range []string{script + ".", script + " ", script + ". ."} {
+		if got, err := Find(named); err == nil {
+			t.Errorf("Find(%q) = %q, want a refusal", named, got)
+		}
+	}
+}

@@ -238,3 +238,22 @@ func TestRemoveRefusesAnAccountFolderThatIsALink(t *testing.T) {
 		t.Errorf("deleted through the link: %q %v", got, err)
 	}
 }
+
+func TestMacOSRunsOnlyHelpAndVersion(t *testing.T) {
+	for _, args := range [][]string{{}, {"help"}, {"-h"}, {"--help"}, {"version"}, {"--version"}} {
+		if why, refused := Refusal("darwin", args); refused {
+			t.Errorf("darwin %v: refused with %q, want it to run", args, why)
+		}
+	}
+	for _, args := range [][]string{{"work"}, {"usage"}, {"usage", "--live"}, {"statusline"}, {"rm", "work"}, {"upgrade"}, {"work", "--help"}} {
+		why, refused := Refusal("darwin", args)
+		if !refused || !strings.Contains(why, "doesn't support macOS") || !strings.Contains(why, "Keychain") {
+			t.Errorf("darwin %v: Refusal = %q, %t, want the macOS message", args, why, refused)
+		}
+	}
+	for _, goos := range []string{"windows", "linux"} {
+		if why, refused := Refusal(goos, []string{"work"}); refused {
+			t.Errorf("%s: refused with %q", goos, why)
+		}
+	}
+}

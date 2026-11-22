@@ -115,6 +115,22 @@ func (a App) Run(args []string) int {
 	return a.launch(args[0], args[1:])
 }
 
+const macOSUnsupported = "hat doesn't support macOS yet. Claude Code keeps macOS sign-ins in the Keychain, not in each account's folder, so every account would ask you to sign in again at every start. Run Claude Code with plain claude on this Mac"
+
+// Refusal is why hat won't run args on the operating system goos names.
+// Help and version always run, so someone on an unsupported system can still
+// see what hat is and which build they have.
+func Refusal(goos string, args []string) (string, bool) {
+	if goos != "darwin" || len(args) == 0 {
+		return "", false
+	}
+	switch args[0] {
+	case "help", "-h", "--help", "version", "--version":
+		return "", false
+	}
+	return macOSUnsupported, true
+}
+
 func (a App) fail(code int, format string, args ...any) int {
 	fmt.Fprintf(a.Err, "hat: "+format+"\n", args...)
 	return code

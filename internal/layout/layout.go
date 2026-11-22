@@ -68,11 +68,18 @@ func (l Layout) UsageFile(configDir string) (path string, listed bool) {
 	switch {
 	case samePath(dir, l.MainDir):
 		return filepath.Join(l.UsageDir, "main.json"), true
-	case samePath(filepath.Dir(dir), l.Home) && strings.HasPrefix(base, AccountDirPrefix) && base != AccountDirPrefix:
+	case samePath(filepath.Dir(dir), l.Home) && strings.HasPrefix(base, AccountDirPrefix) && base != AccountDirPrefix && isPlainName(base):
 		return filepath.Join(l.UsageDir, strings.TrimPrefix(base, ".")+".json"), true
 	default:
 		return "", false
 	}
+}
+
+// isPlainName is whether Windows opens the folder by exactly this name. It
+// drops trailing dots and spaces, so ".claude-work." is .claude-work, and a
+// colon names a stream inside a file, so neither may pick a record file.
+func isPlainName(name string) bool {
+	return !strings.Contains(name, ":") && strings.TrimRight(name, ". ") == name
 }
 
 func samePath(a, b string) bool {

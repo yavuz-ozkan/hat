@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strings"
 
@@ -35,6 +36,10 @@ func moduleVersion() string {
 }
 
 func main() {
+	if why, refused := cli.Refusal(runtime.GOOS, os.Args[1:]); refused {
+		fmt.Fprintf(os.Stderr, "hat: %s.\n", why)
+		os.Exit(1)
+	}
 	l, err := layout.Current()
 	if err != nil && len(os.Args) > 1 && os.Args[1] == "statusline" {
 		os.Exit(cli.StatusLineWithoutRecording(os.Stdin, os.Stdout, os.Stderr, os.Args[2:]))

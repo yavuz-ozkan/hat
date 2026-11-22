@@ -20,6 +20,9 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+      - name: Go matches the go.mod toolchain line
+        shell: bash
+        run: sh .github/scripts/check-go-toolchain.sh
       - name: Formatting
         if: runner.os == 'Linux'
         run: |
@@ -30,6 +33,9 @@ jobs:
       - name: Race detector
         if: runner.os == 'Linux'
         run: go test -count=1 -race ./...
+      - name: Known vulnerabilities
+        if: runner.os == 'Linux'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
       - name: install.ps1 parses in Windows PowerShell 5.1
         if: runner.os == 'Windows'
         shell: powershell
@@ -47,8 +53,11 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+      - name: Go matches the go.mod toolchain line
+        shell: bash
+        run: sh .github/scripts/check-go-toolchain.sh
       - name: Installer lint
-        run: shellcheck install.sh
+        run: shellcheck install.sh .github/scripts/check-go-toolchain.sh
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser

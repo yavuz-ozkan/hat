@@ -11,9 +11,6 @@ package memory
 
 import (
 	"encoding/json"
-	"errors"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -24,66 +21,19 @@ import (
 // a hash hat can't reproduce (Claude Code 2.1.329).
 const maxKeyLength = 200
 
-// ProjectRoot is the folder Claude files a project's memory under, by Claude
-// Code 2.1.330's rule: the folder holding the repo's .git, so every worktree
-// of a repo shares one memory. A linked worktree whose repo has no .git
-// folder, like one made from a bare repo, uses the repo folder itself, unless
-// that holds a .git of its own. A submodule keeps its own folder. Outside git
-// it's dir itself.
+// ProjectRoot is the folder Claude files a project's memory under (Claude
+// Code 2.1.330). Claude doesn't ask git: it reads files, and so does hat, so a
+// folder can't steer it with git settings. The root is the nearest folder at
+// or above dir that holds a .git, so every subfolder of a repo shares one
+// memory. When that .git is a linked worktree's pointer file, and the
+// worktree's git folder points back at it, the root moves to the main repo, so
+// its worktrees share one memory too. Outside git it's dir itself.
 func ProjectRoot(dir string) string {
-	repo, err := locateRepo(dir)
-	if err != nil {
+	root, found := findGitRoot(dir)
+	if !found {
 		return dir
 	}
-	if !repo.isLinkedWorktree() {
-		return repo.top
-	}
-	if filepath.Base(repo.commonDir) == ".git" {
-		return filepath.Dir(repo.commonDir)
-	}
-	if _, err := os.Stat(filepath.Join(repo.commonDir, ".git")); err == nil {
-		return repo.top
-	}
-	return repo.commonDir
-}
-
-type repoFolders struct {
-	gitDir, commonDir, top string
-}
-
-// isLinkedWorktree reads what Claude reads: git writes a commondir file only
-// into a linked worktree's git folder, not a submodule's or a plain repo's.
-func (r repoFolders) isLinkedWorktree() bool {
-	_, err := os.Stat(filepath.Join(r.gitDir, "commondir"))
-	return err == nil
-}
-
-var errUnexpectedGitOutput = errors.New("git rev-parse printed something other than three folders")
-
-// locateRepo leaves out --path-format=absolute, which needs git 2.31. Without
-// it git prints --git-dir and --git-common-dir relative to dir when it can.
-func locateRepo(dir string) (repoFolders, error) {
-	out, err := git(dir, "rev-parse", "--git-dir", "--git-common-dir", "--show-toplevel")
-	if err != nil {
-		return repoFolders{}, err
-	}
-	lines := strings.Split(out, "\n")
-	if len(lines) != 3 {
-		return repoFolders{}, errUnexpectedGitOutput
-	}
-	return repoFolders{
-		gitDir:    resolveAgainst(dir, lines[0]),
-		commonDir: resolveAgainst(dir, lines[1]),
-		top:       filepath.Clean(filepath.FromSlash(strings.TrimSpace(lines[2]))),
-	}, nil
-}
-
-func resolveAgainst(dir, gitPath string) string {
-	path := filepath.FromSlash(strings.TrimSpace(gitPath))
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(dir, path)
-	}
-	return filepath.Clean(path)
+	return mainRepoOf(root)
 }
 
 // Key is the project folder name Claude uses under projects/. Claude's
@@ -124,9 +74,4 @@ func SettingsArgs(mainDir, launchDir string) []string {
 		"autoMemoryDirectory": filepath.Join(mainDir, "projects", key, "memory"),
 	})
 	return []string{"--settings", string(settings)}
-}
-
-func git(dir string, args ...string) (string, error) {
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
-	return strings.TrimSpace(string(out)), err
 }

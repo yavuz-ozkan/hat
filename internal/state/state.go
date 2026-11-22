@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -30,11 +31,30 @@ func Read(path string) (Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	doc, err := parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s isn't valid JSON (%v). hat didn't change it. Fix or restore the file, then run hat again", path, err)
+	}
+	return doc, nil
+}
+
+var errTrailingData = errors.New("there is more after the first JSON value")
+
+func parse(data []byte) (Document, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return Document{}, nil
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	doc := Document{}
+	var doc Document
 	if err := decoder.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("%s isn't valid JSON (%v). hat didn't change it. Fix or restore the file, then run hat again", path, err)
+		return nil, err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errTrailingData
+	}
+	if doc == nil {
+		doc = Document{}
 	}
 	return doc, nil
 }

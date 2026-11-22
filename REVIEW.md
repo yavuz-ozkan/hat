@@ -1,7 +1,7 @@
 # Review
 
 ## What matters
-- hat never writes to `~/.claude`, `~/.claude.json`, or a `~/.claude-*` folder it didn't make. `account.kindOf` decides which folders it made (the `.hat` marker, the legacy `.claude-as` marker, or a `CLAUDE.md` linked to main's); anything unmanaged is read only.
+- hat never writes to `~/.claude`, `~/.claude.json`, or a `~/.claude-*` folder it didn't make. `account.kindOf` decides which folders it made (the `.hat` marker, the legacy `.claude-as` marker, or a `CLAUDE.md` linked to main's); hat writes nothing in an unmanaged folder. `hat usage --live` does run `claude mcp list` as each account with an expired sign-in, unmanaged ones included (`cli.App.liveRows`), so Claude itself may renew that sign-in and write in the folder.
 - `hat usage` (the default) and `hat statusline` never read or send an account's token. They work only from what Claude Code hands its status line, recorded under the user cache folder (`layout.UsageDir`), never inside a Claude config folder.
 - `hat usage --live` is the only path that reads a token. It goes only to Anthropic's usage endpoint, as a Bearer header, through a client that never follows redirects (`usage.LiveClient`). It is never printed, logged, or put in an error message.
 - `hat statusline` never fails the status line: whatever goes wrong while recording, it still prints, and a wrapped command's output and exit code pass through unchanged.
