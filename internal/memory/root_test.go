@@ -74,7 +74,7 @@ func TestProjectRootKeepsAWorktreeWhoseRepoDoesNotPointBack(t *testing.T) {
 // git rev-parse, every one of them made hat file its memory under victim's.
 func TestProjectRootCantBeSteeredIntoAnotherRepo(t *testing.T) {
 	needGit(t)
-	base := t.TempDir()
+	base := longPathTempDir(t)
 	victim := filepath.Join(base, "victim")
 	repoWithACommit(t, victim)
 	runGit(t, victim, "worktree", "add", "-q", filepath.Join(base, "victim-feature"))

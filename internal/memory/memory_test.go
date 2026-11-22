@@ -66,7 +66,7 @@ func repoWithACommit(t *testing.T, repo string) {
 
 func TestProjectRootMapsSubfoldersAndWorktreesToTheRepo(t *testing.T) {
 	needGit(t)
-	base := t.TempDir()
+	base := longPathTempDir(t)
 	repo := filepath.Join(base, "repo")
 	repoWithACommit(t, repo)
 	worktree := filepath.Join(base, "repo-feature")
@@ -81,7 +81,7 @@ func TestProjectRootMapsSubfoldersAndWorktreesToTheRepo(t *testing.T) {
 
 func TestProjectRootOfABareReposWorktreeIsTheBareRepo(t *testing.T) {
 	needGit(t)
-	base := t.TempDir()
+	base := longPathTempDir(t)
 	repoWithACommit(t, filepath.Join(base, "source"))
 	bare := filepath.Join(base, "project")
 	runGit(t, base, "clone", "-q", "--bare", filepath.Join(base, "source"), bare)
@@ -95,7 +95,7 @@ func TestProjectRootOfABareReposWorktreeIsTheBareRepo(t *testing.T) {
 
 func TestProjectRootOfASubmoduleIsTheSubmodule(t *testing.T) {
 	needGit(t)
-	base := t.TempDir()
+	base := longPathTempDir(t)
 	repoWithACommit(t, filepath.Join(base, "lib"))
 	super := filepath.Join(base, "super")
 	repoWithACommit(t, super)

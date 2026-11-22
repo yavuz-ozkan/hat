@@ -1,12 +1,17 @@
-package usage
+package terminal
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
-// printable drops what a terminal would act on instead of show: C0 and C1
+// Printable drops what a terminal would act on instead of show: C0 and C1
 // control characters, DEL, and whole escape sequences, so a name or email
 // from an account's files or Anthropic's answer can't move the cursor, rewrite
-// the screen, or set the window title.
-func printable(s string) string {
+// the screen, or set the window title. It also drops Unicode format
+// characters, like bidi overrides and zero-width spaces, and the line and
+// paragraph separators, so text can't show up reordered or split.
+func Printable(s string) string {
 	var out strings.Builder
 	runes := []rune(s)
 	for i := 0; i < len(runes); i++ {
@@ -19,6 +24,7 @@ func printable(s string) string {
 		case isStringIntroducer8Bit(r):
 			i = skipControlString(runes, i+1)
 		case r < 0x20 || r == 0x7f || 0x80 <= r && r <= 0x9f:
+		case unicode.Is(unicode.Cf, r) || r == lineSeparator || r == paragraphSeparator:
 		default:
 			out.WriteRune(r)
 		}
@@ -30,6 +36,9 @@ const (
 	escape  = 0x1b
 	bell    = 0x07
 	csi8Bit = 0x9b
+
+	lineSeparator      = 0x2028
+	paragraphSeparator = 0x2029
 )
 
 // ECMA-48 control strings: DCS, SOS, OSC, PM, APC. Each runs until a string

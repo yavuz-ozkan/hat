@@ -6,6 +6,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/yavuz-ozkan/hat/internal/terminal"
 )
 
 const barWidth = 20
@@ -19,20 +21,20 @@ var Colors = Style{Bold: "\x1b[1m", Reset: "\x1b[0m", Green: "\x1b[32m", Yellow:
 func Render(w io.Writer, rows []Row, s Style, now time.Time) {
 	fmt.Fprintln(w)
 	for _, row := range rows {
-		email := printable(row.Email)
+		email := terminal.Printable(row.Email)
 		if email == "" {
 			email = "(no account yet)"
 		}
-		fmt.Fprintf(w, "%s%-10s%s %s%s\n", s.Bold, printable(row.Account), s.Reset, email, ageText(row.AsOf, now, s))
+		fmt.Fprintf(w, "%s%-10s%s %s%s\n", s.Bold, terminal.Printable(row.Account), s.Reset, email, ageText(row.AsOf, now, s))
 		switch {
 		case row.Problem != nil:
-			fmt.Fprintf(w, "  %s%s%s\n", s.Yellow, printable(row.Problem.Message), s.Reset)
+			fmt.Fprintf(w, "  %s%s%s\n", s.Yellow, terminal.Printable(row.Problem.Message), s.Reset)
 		case len(row.Limits) == 0:
 			fmt.Fprintln(w, "  No current plan limits.")
 		}
 		for _, limit := range row.Limits {
-			label := printable(limit.Label)
-			if model := printable(limit.Model); model != "" {
+			label := terminal.Printable(limit.Label)
+			if model := terminal.Printable(limit.Model); model != "" {
 				label += ", " + model
 			}
 			fmt.Fprintf(w, "  %-14s %s %4.0f%%  %s\n", label, bar(limit.Percent, s), math.Round(limit.Percent), resetText(limit.ResetsAt, now))
