@@ -30,7 +30,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # With two tags on one commit (a pre-release and its release),
-          # GoReleaser would otherwise pick either; build the one pushed.
+          # GoReleaser picks the pre-release; build the tag that was pushed.
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:

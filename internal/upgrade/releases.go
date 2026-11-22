@@ -61,17 +61,11 @@ func (g GitHubReleases) LatestTag() (string, error) {
 		}
 		// With only pre-releases published, GitHub redirects /releases/latest
 		// to the releases list instead of answering 404.
-		if releases, err := url.Parse(g.ReleasesURL); err == nil && sameReleasesPage(location, releases) {
+		if strings.TrimSuffix(location.String(), "/") == strings.TrimSuffix(g.ReleasesURL, "/") {
 			return "", noRelease
 		}
 	}
 	return "", fmt.Errorf("GitHub sent the newest-release lookup to %q, which isn't a release page, so the repository may have moved. Find where hat lives now and reinstall from there", resp.Header.Get("Location"))
-}
-
-func sameReleasesPage(location, releases *url.URL) bool {
-	return strings.EqualFold(location.Scheme, releases.Scheme) &&
-		strings.EqualFold(location.Host, releases.Host) &&
-		strings.TrimSuffix(location.Path, "/") == strings.TrimSuffix(releases.Path, "/")
 }
 
 func tagOfReleasePage(urlPath string) (string, bool) {
