@@ -16,21 +16,14 @@ import (
 // out of a .git file, a commondir or gitdir file, or a link, before it trusts
 // that path for the project root. hat runs the same checks so it lands on the
 // same root, including when Claude refuses a path and keeps the folder it
-// started from.
+// started from. The Windows and Linux builds of Claude differ in what counts
+// as an absolute path and a separator (platform_*.go).
 
 // maxLinks is how many links Claude follows in one path before refusing it.
 const maxLinks = 40
 
 var (
-	// startsAbsolute is what Claude treats as an absolute path on every
-	// platform: a leading slash or a drive letter and a slash.
-	startsAbsolute = regexp.MustCompile(`^(?:[/\\]|[A-Za-z]:[/\\])`)
-	// walkStart is the part of a path Claude doesn't look at while walking
-	// it: a UNC share, a drive, or a leading slash.
-	walkStart  = regexp.MustCompile(`^(?:[/\\]{2}[^/\\]+[/\\][^/\\]+[/\\]?|[A-Za-z]:[/\\]|[/\\])`)
-	separators = regexp.MustCompile(`[/\\]+`)
-	endsInSep  = regexp.MustCompile(`[\\/]$`)
-
+	anySlashes         = regexp.MustCompile(`[/\\]+`)
 	twoLeadingSlashes  = regexp.MustCompile(`^[\\/]{2}`)
 	devicePrefix       = regexp.MustCompile(`^[\\/]{2}[?.][\\/]`)
 	ntPrefix           = regexp.MustCompile(`^[\\/]\?\?[\\/]`)
@@ -50,7 +43,7 @@ func unsafePath(text, base string) bool {
 		return true
 	}
 	for _, path := range []string{text, resolved} {
-		if startsInNetwork(path) || isNetFolder(path) || isMacVolumePath(path) {
+		if onAnotherNetHost(path, base) || startsInNetwork(path) || isNetFolder(path) || isMacVolumePath(path) {
 			return true
 		}
 	}
@@ -69,30 +62,56 @@ func leavesTheShare(path, base string) bool {
 	return !ok || !baseOK || server != baseServer
 }
 
+// onAnotherNetHost is whether path is under an automounted host, like
+// /net/<host>, other than the one base is under.
+func onAnotherNetHost(path, base string) bool {
+	host, ok := netHostOf(path)
+	if !ok {
+		return false
+	}
+	baseHost, baseOK := netHostOf(base)
+	return !baseOK || host != baseHost
+}
+
 func isNTPath(path string) bool {
 	return ntPrefix.MatchString(path) || strings.Contains(path, "??") && ntPrefix.MatchString(windowsNormalize(path))
 }
 
-// windowsNormalize is enough of Node's path.win32.normalize to tell whether a
-// path turns into an NT path once its . and .. segments are gone.
+// windowsNormalize is Node's path.win32.normalize for paths that don't start
+// with two slashes: those can't become an NT path, which starts with one.
 func windowsNormalize(path string) string {
 	path = strings.ReplaceAll(path, "/", `\`)
 	if strings.HasPrefix(path, `\\`) {
 		return path
 	}
+	drive := ""
+	if len(path) >= 2 && path[1] == ':' && isASCIILetter(path[0]) {
+		drive, path = path[:2], path[2:]
+	}
+	rooted := strings.HasPrefix(path, `\`)
 	var kept []string
 	for _, segment := range strings.Split(path, `\`) {
-		switch segment {
-		case ".":
-		case "..":
-			if len(kept) > 1 {
-				kept = kept[:len(kept)-1]
-			}
+		switch {
+		case segment == "" || segment == ".":
+		case segment == ".." && len(kept) > 0 && kept[len(kept)-1] != "..":
+			kept = kept[:len(kept)-1]
+		case segment == ".." && rooted:
 		default:
 			kept = append(kept, segment)
 		}
 	}
-	return strings.Join(kept, `\`)
+	joined := strings.Join(kept, `\`)
+	if rooted {
+		return drive + `\` + joined
+	}
+	if joined == "" {
+		joined = "."
+	}
+	return drive + joined
+}
+
+func isASCIILetter(b byte) bool {
+	return 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z'
 }
 
 func serverOf(path string) (string, bool) {
@@ -123,7 +142,7 @@ func asciiLower(s string) string {
 }
 
 func hasDotsOnlySegment(path string) bool {
-	for _, segment := range separators.Split(path, -1) {
+	for _, segment := range anySlashes.Split(path, -1) {
 		if dotsOnlySegment.MatchString(segment) {
 			return true
 		}
@@ -176,23 +195,26 @@ func isMacVolumePath(path string) bool {
 }
 
 // unsafeWalk is whether Claude refuses text, read from a file in base, after
-// walking it on disk both as written and as resolved against base.
-func unsafeWalk(text, base string) bool {
+// walking it on disk both as written and as resolved against base. Network
+// hosts are compared with checkBase's.
+func unsafeWalk(text, base, checkBase string) bool {
 	written := text
 	if !startsAbsolute.MatchString(text) {
 		written = base + string(filepath.Separator) + text
 	}
-	if !walksSafely(written, maxLinks) {
+	if !walksSafely(written, checkBase, maxLinks) {
 		return true
 	}
 	resolved := resolvePath(base, text)
-	return resolved != written && !walksSafely(resolved, maxLinks)
+	return resolved != written && !walksSafely(resolved, checkBase, maxLinks)
 }
 
 // walksSafely is whether every part of path that exists is a plain file or
 // folder, or a link whose target passes the same checks, within linksLeft
-// links. Missing parts are fine.
-func walksSafely(path string, linksLeft int) bool {
+// links. Missing parts are fine. Each part is checked by name before it is
+// looked at, so a path into another network host is refused without asking
+// the automounter for it.
+func walksSafely(path, checkBase string, linksLeft int) bool {
 	if linksLeft <= 0 {
 		return false
 	}
@@ -207,7 +229,7 @@ func walksSafely(path string, linksLeft int) bool {
 			continue
 		}
 		at = filepath.Join(at, segment)
-		if isMacVolumePath(at) || startsInNetwork(at) {
+		if isMacVolumePath(at) || onAnotherNetHost(at, checkBase) || startsInNetwork(at) {
 			return false
 		}
 		switch entryKindOf(at) {
@@ -228,7 +250,7 @@ func walksSafely(path string, linksLeft int) bool {
 				}
 				next += rest
 			}
-			return walksSafely(next, linksLeft-1)
+			return walksSafely(next, checkBase, linksLeft-1)
 		}
 	}
 	return true
@@ -257,27 +279,39 @@ func entryKindOf(path string) entryKind {
 	}
 }
 
-// kindOf sorts entries the way Node does. Go reports a Windows junction as
-// irregular rather than as a link, where Node calls it a link, and it reports
-// other reparse points, like OneDrive placeholders, as irregular where Node
-// sees a plain file or folder.
+// kindOf sorts what Lstat found the way Claude's runtime does. Go reports a
+// Windows junction as irregular, where libuv calls it a link only when it
+// points at a drive path (\??\C:\...): a junction to a volume
+// (\??\Volume{...}\) is a plain folder there.
 func kindOf(path string, info fs.FileInfo) entryKind {
-	mode := info.Mode()
-	switch {
-	case mode&fs.ModeSymlink != 0:
+	if info.Mode()&fs.ModeSymlink != 0 {
 		return linkEntry
-	case runtime.GOOS == "windows" && mode&fs.ModeIrregular != 0:
-		if _, err := os.Readlink(path); err == nil {
+	}
+	if runtime.GOOS == "windows" && info.Mode()&fs.ModeIrregular != 0 {
+		target, err := os.Readlink(path)
+		if err == nil && pointsAtADrive(target) {
 			return linkEntry
 		}
-		if mode.IsDir() {
-			return folderEntry
-		}
-		return fileEntry
+	}
+	return followedKindOf(info)
+}
+
+// pointsAtADrive is whether a junction target, as os.Readlink gives it, is a
+// drive path.
+func pointsAtADrive(target string) bool {
+	return len(target) >= 3 && isASCIILetter(target[0]) && target[1] == ':' && os.IsPathSeparator(target[2])
+}
+
+// followedKindOf sorts what Stat found, through any link.
+func followedKindOf(info fs.FileInfo) entryKind {
+	mode := info.Mode()
+	switch {
 	case mode.IsDir():
 		return folderEntry
 	case mode.IsRegular():
 		return fileEntry
+	case mode.Type() == fs.ModeIrregular:
+		return reparsePointKind(info)
 	default:
 		return specialEntry
 	}
@@ -301,7 +335,8 @@ var errTooManyLinks = errors.New("too many links")
 
 // realPath is Node's JavaScript fs.realpathSync, which Claude's runtime uses
 // on Windows too: it follows links, and keeps every other part of the path
-// as written, so c:\dev stays c:\dev where Go's EvalSymlinks would give C:\dev.
+// as written, so c:\dev stays c:\dev where Go's EvalSymlinks would give C:\dev,
+// and an 8.3 name like RUNNER~1 stays short.
 func realPath(path string) (string, error) {
 	path = filepath.Clean(path)
 	for followed := 0; ; followed++ {
@@ -348,11 +383,8 @@ func resolvePath(base, path string) string {
 	switch {
 	case filepath.IsAbs(path):
 		return filepath.Clean(path)
-	case filepath.VolumeName(path) != "":
-		if abs, err := filepath.Abs(path); err == nil {
-			return abs
-		}
-		return filepath.Clean(path)
+	case runtime.GOOS == "windows" && isDriveRelative(path):
+		return filepath.Clean(filepath.Join(driveFolder(base, path[:2]), path[2:]))
 	case runtime.GOOS == "windows" && path != "" && os.IsPathSeparator(path[0]):
 		return filepath.Clean(filepath.VolumeName(base) + path)
 	default:
@@ -360,9 +392,35 @@ func resolvePath(base, path string) string {
 	}
 }
 
-// trimJS is JavaScript's String.trim, which also drops a byte order mark.
+// isDriveRelative is whether path is like C:foo, relative to a drive's
+// current folder.
+func isDriveRelative(path string) bool {
+	return len(path) >= 2 && isASCIILetter(path[0]) && path[1] == ':' && !(len(path) >= 3 && os.IsPathSeparator(path[2]))
+}
+
+// driveFolder is the folder Node's path.win32.resolve resolves a drive's
+// relative path against: base when it is on that drive, else the drive's
+// current folder from the hidden =C: variable, else the process's current
+// folder when it is on that drive, else the drive's root. The drive letter
+// keeps the case it has in the path.
+func driveFolder(base, drive string) string {
+	sameDrive := func(folder string) bool { return strings.EqualFold(filepath.VolumeName(folder), drive) }
+	if sameDrive(base) {
+		return drive + base[len(drive):]
+	}
+	if current := os.Getenv("=" + strings.ToUpper(drive)); current != "" && sameDrive(current) {
+		return drive + current[len(drive):]
+	}
+	if cwd, err := os.Getwd(); err == nil && sameDrive(cwd) {
+		return drive + cwd[len(drive):]
+	}
+	return drive + `\`
+}
+
+// trimJS is JavaScript's String.trim: Unicode white space and a byte order
+// mark, but not U+0085, which Go counts as space and JavaScript doesn't.
 func trimJS(s string) string {
 	return strings.TrimFunc(s, func(r rune) bool {
-		return unicode.IsSpace(r) || r == '\uFEFF'
+		return unicode.IsSpace(r) && r != '\u0085' || r == '\uFEFF'
 	})
 }

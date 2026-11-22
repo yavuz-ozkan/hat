@@ -111,6 +111,34 @@ func TestReadTakesAnEmptyOrNullFileForAnEmptyDocument(t *testing.T) {
 	}
 }
 
+// Claude Code offers to restore an empty state file from its backups, so hat
+// leaves it for Claude.
+func TestInheritFromMainLeavesAnEmptyAccountStateFileAlone(t *testing.T) {
+	for _, content := range []string{"", " \r\n\t"} {
+		dir := t.TempDir()
+		mainPath := writeFile(t, dir, "main.json", mainState)
+		accountPath := writeFile(t, dir, "account.json", content)
+
+		if err := InheritFromMain(mainPath, accountPath); err != nil {
+			t.Fatalf("%q: %v", content, err)
+		}
+
+		if after, _ := os.ReadFile(accountPath); string(after) != content {
+			t.Errorf("%q: the file now reads %q", content, after)
+		}
+	}
+}
+
+func TestInheritFromMainReadsAnEmptyMainStateFileAsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := writeFile(t, dir, "main.json", "")
+	accountPath := writeFile(t, dir, "account.json", accountState)
+
+	if err := InheritFromMain(mainPath, accountPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInheritFromMainFillsAnAccountStateFileHoldingNull(t *testing.T) {
 	dir := t.TempDir()
 	mainPath := writeFile(t, dir, "main.json", mainState)

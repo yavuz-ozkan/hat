@@ -42,13 +42,19 @@ func TestUsageFileIsNotListedForFoldersHatUsageNeverShows(t *testing.T) {
 // its own, like claude-work..json.
 func TestUsageFileIsNotListedForNamesWindowsWouldRead(t *testing.T) {
 	l := testLayout(t)
-	for _, name := range []string{".claude-work.", ".claude-work ", ".claude-work. .", ".claude-work:x", ".claude-work::$DATA", ".claude-a:b"} {
+	for _, name := range namesWindowsWouldRead {
 		configDir := filepath.Join(l.Home, name)
-		if got, listed := l.UsageFile(configDir); listed {
+		got, listed := l.UsageFile(configDir)
+		switch {
+		case runtime.GOOS == "windows" && listed:
 			t.Errorf("UsageFile(%q) = %s, want it not listed", configDir, got)
+		case runtime.GOOS != "windows" && got != filepath.Join(l.UsageDir, name[1:]+".json"):
+			t.Errorf("UsageFile(%q) = %s, %t, want the folder's own record file, since Linux keeps the name as is", configDir, got, listed)
 		}
 	}
 }
+
+var namesWindowsWouldRead = []string{".claude-work.", ".claude-work ", ".claude-work. .", ".claude-work:x", ".claude-work::$DATA", ".claude-a:b"}
 
 func TestUsageFileIgnoresCaseOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {

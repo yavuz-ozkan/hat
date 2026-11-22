@@ -121,6 +121,15 @@ func TestProjectRootCantBeSteeredIntoAnotherRepo(t *testing.T) {
 			t.Errorf("%s: ProjectRoot = %q, want the folder itself", name, got)
 		}
 	}
+
+	// A .git that links to the victim worktree's own pointer file: the
+	// victim's git folder points back at the worktree, not here.
+	linked := filepath.Join(base, "git-linked-to-the-victims-worktree")
+	writeTree(t, linked, map[string]string{"src/": ""})
+	fileLink(t, filepath.Join(linked, ".git"), filepath.Join(base, "victim-feature", ".git"))
+	if got := ProjectRoot(linked); got != linked {
+		t.Errorf("a .git linked to the victim's worktree: ProjectRoot = %q, want the folder itself", got)
+	}
 }
 
 func TestProjectRootReadsAPointerFileWithCRLFAndAByteOrderMark(t *testing.T) {

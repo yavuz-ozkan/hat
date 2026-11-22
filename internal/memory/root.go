@@ -48,16 +48,19 @@ func isGitEntry(path, root string) bool {
 	if err != nil {
 		return false
 	}
-	if kindOf(path, info) == linkEntry {
+	kind := kindOf(path, info)
+	if kind == linkEntry {
 		target, ok := linkText(path)
-		if !ok || unsafePath(target, root) || unsafeWalk(target, root) {
+		if !ok || unsafePath(target, root) || unsafeWalk(target, root, root) {
 			return false
 		}
-		if info, err = os.Stat(path); err != nil {
+		followed, err := os.Stat(path)
+		if err != nil {
 			return false
 		}
+		kind = followedKindOf(followed)
 	}
-	return info.IsDir() || info.Mode().IsRegular()
+	return kind == fileEntry || kind == folderEntry
 }
 
 // mainRepoOf is the folder Claude files a linked worktree's memory under:
@@ -82,13 +85,13 @@ func mainRepoOf(root string) string {
 		return root
 	}
 	gitDirText = trimJS(gitDirText)
-	if unsafePath(gitDirText, root) || unsafeWalk(gitDirText, root) {
+	if unsafePath(gitDirText, root) || unsafeWalk(gitDirText, root, root) {
 		return root
 	}
 	gitDir := resolvePath(root, gitDirText)
 
 	commonText, ok := readGitFile(gitDir, "commondir")
-	if !ok || unsafePath(commonText, gitDir) || unsafeWalk(commonText, gitDir) {
+	if !ok || unsafePath(commonText, gitDir) || unsafeWalk(commonText, gitDir, gitDir) {
 		return root
 	}
 	commonDir := resolvePath(gitDir, commonText)
@@ -97,7 +100,7 @@ func mainRepoOf(root string) string {
 	}
 
 	backText, ok := readGitFile(gitDir, "gitdir")
-	if !ok || unsafePath(backText, root) || unsafeWalk(backText, gitDir) {
+	if !ok || unsafePath(backText, root) || unsafeWalk(backText, gitDir, root) {
 		return root
 	}
 	if filepath.Separator == '/' && anyHasBackslash(root, gitDir, backText, commonDir) {
@@ -118,7 +121,7 @@ func mainRepoOf(root string) string {
 
 func readGitFile(gitDir, name string) (string, bool) {
 	path := filepath.Join(gitDir, name)
-	if !walksSafely(path, maxLinks) {
+	if !walksSafely(path, gitDir, maxLinks) {
 		return "", false
 	}
 	if kind := entryKindOf(path); kind == linkEntry || kind == specialEntry || kind == unreadableEntry {

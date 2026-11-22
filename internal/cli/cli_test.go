@@ -239,21 +239,27 @@ func TestRemoveRefusesAnAccountFolderThatIsALink(t *testing.T) {
 	}
 }
 
-func TestMacOSRunsOnlyHelpAndVersion(t *testing.T) {
-	for _, args := range [][]string{{}, {"help"}, {"-h"}, {"--help"}, {"version"}, {"--version"}} {
-		if why, refused := Refusal("darwin", args); refused {
-			t.Errorf("darwin %v: refused with %q, want it to run", args, why)
-		}
+func TestMacOSRunsHelpVersionAndAStatusLineThatRecordsNothing(t *testing.T) {
+	cases := map[Handling][][]string{
+		RunNormally:       {{}, {"help"}, {"-h"}, {"--help"}, {"version"}, {"--version"}},
+		StatusLineOnly:    {{"statusline"}, {"statusline", "sh", "~/.claude/statusline.sh"}},
+		RefuseUnsupported: {{"work"}, {"usage"}, {"usage", "--live"}, {"rm", "work"}, {"upgrade"}, {"work", "--help"}},
 	}
-	for _, args := range [][]string{{"work"}, {"usage"}, {"usage", "--live"}, {"statusline"}, {"rm", "work"}, {"upgrade"}, {"work", "--help"}} {
-		why, refused := Refusal("darwin", args)
-		if !refused || !strings.Contains(why, "doesn't support macOS") || !strings.Contains(why, "Keychain") {
-			t.Errorf("darwin %v: Refusal = %q, %t, want the macOS message", args, why, refused)
+	for want, commandLines := range cases {
+		for _, args := range commandLines {
+			if got := HandlingFor("darwin", args); got != want {
+				t.Errorf("darwin %v: HandlingFor = %d, want %d", args, got, want)
+			}
 		}
 	}
 	for _, goos := range []string{"windows", "linux"} {
-		if why, refused := Refusal(goos, []string{"work"}); refused {
-			t.Errorf("%s: refused with %q", goos, why)
+		for _, args := range [][]string{{"work"}, {"statusline"}, {"usage"}} {
+			if got := HandlingFor(goos, args); got != RunNormally {
+				t.Errorf("%s %v: HandlingFor = %d, want it to run normally", goos, args, got)
+			}
 		}
+	}
+	if !strings.Contains(MacOSUnsupported, "doesn't support macOS") || !strings.Contains(MacOSUnsupported, "Keychain") {
+		t.Errorf("MacOSUnsupported = %q", MacOSUnsupported)
 	}
 }

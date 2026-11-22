@@ -36,9 +36,12 @@ func moduleVersion() string {
 }
 
 func main() {
-	if why, refused := cli.Refusal(runtime.GOOS, os.Args[1:]); refused {
-		fmt.Fprintf(os.Stderr, "hat: %s.\n", why)
+	switch cli.HandlingFor(runtime.GOOS, os.Args[1:]) {
+	case cli.RefuseUnsupported:
+		fmt.Fprintf(os.Stderr, "hat: %s.\n", cli.MacOSUnsupported)
 		os.Exit(1)
+	case cli.StatusLineOnly:
+		os.Exit(cli.StatusLineWithoutRecording(os.Stdin, os.Stdout, os.Stderr, os.Args[2:]))
 	}
 	l, err := layout.Current()
 	if err != nil && len(os.Args) > 1 && os.Args[1] == "statusline" {

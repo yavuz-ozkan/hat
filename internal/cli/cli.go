@@ -116,20 +116,34 @@ func (a App) Run(args []string) int {
 	return a.launch(args[0], args[1:])
 }
 
-const macOSUnsupported = "hat doesn't support macOS yet. Claude Code keeps macOS sign-ins in the Keychain, not in each account's folder, so every account would ask you to sign in again at every start. Run Claude Code with plain claude on this Mac"
+const MacOSUnsupported = "hat doesn't support macOS yet. Claude Code keeps macOS sign-ins in the Keychain, not in each account's folder, so every account would ask you to sign in again at every start. Run Claude Code with plain claude on this Mac"
 
-// Refusal is why hat won't run args on the operating system goos names.
-// Help and version always run, so someone on an unsupported system can still
-// see what hat is and which build they have.
-func Refusal(goos string, args []string) (string, bool) {
+// Handling is how hat treats a command line on the operating system it runs
+// on.
+type Handling int
+
+const (
+	RunNormally Handling = iota
+	// StatusLineOnly prints the status line and records nothing. A status
+	// line must always print, even where hat can't record usage.
+	StatusLineOnly
+	RefuseUnsupported
+)
+
+// HandlingFor is how hat treats args on the operating system goos names. On
+// macOS, help and version still run, so someone can see what hat is and
+// which build they have.
+func HandlingFor(goos string, args []string) Handling {
 	if goos != "darwin" || len(args) == 0 {
-		return "", false
+		return RunNormally
 	}
 	switch args[0] {
 	case "help", "-h", "--help", "version", "--version":
-		return "", false
+		return RunNormally
+	case "statusline":
+		return StatusLineOnly
 	}
-	return macOSUnsupported, true
+	return RefuseUnsupported
 }
 
 // say prints one line, without anything a terminal would act on: account

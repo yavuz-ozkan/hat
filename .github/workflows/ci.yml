@@ -57,9 +57,8 @@ jobs:
         shell: bash
         run: sh .github/scripts/check-go-toolchain.sh
       - name: Installer lint
-        run: shellcheck install.sh .github/scripts/check-go-toolchain.sh
-      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: v2.20.3
-          args: release --snapshot --clean
+        run: shellcheck install.sh .github/scripts/*.sh
+      - name: Install GoReleaser
+        run: sh .github/scripts/install-goreleaser.sh "$RUNNER_TEMP/goreleaser"
+      - name: Snapshot build
+        run: '"$RUNNER_TEMP/goreleaser/goreleaser" release --snapshot --clean'
