@@ -1,0 +1,58 @@
+version: 2
+
+project_name: hat
+
+builds:
+  - id: hat
+    main: .
+    binary: hat
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - ids:
+      - hat
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+release:
+  # Published as a draft. The Release workflow attests the archives, then makes
+  # the release public, so nothing is downloadable without its provenance.
+  draft: true
+  # A tag like v1.2.0-rc.1 becomes a GitHub pre-release, which the latest
+  # release lookup in upgrade and both installers skips.
+  prerelease: auto
+  # A failed run can be re-run for the same tag: it replaces the draft it left
+  # and the archives already uploaded to it, instead of failing on them.
+  replace_existing_draft: true
+  replace_existing_artifacts: true
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*feat(\([^)]*\))?:'
+      order: 0
+    - title: Fixes
+      regexp: '^.*fix(\([^)]*\))?:'
+      order: 1
+    - title: Other
+      order: 999

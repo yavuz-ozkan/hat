@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Michroma&family=IBM+Plex+Mono:wght@400;500&family=Special+Elite&display=block" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 640px; background: #141210; }
+  .banner { position: relative; width: 1280px; height: 640px; overflow: hidden;
+    background: url('tape.png') center / 1280px 640px no-repeat; }
+
+  /* Writing on the cassette's blank label (label spans about x 655-1093, y 182-254) */
+  .label { position: absolute; left: 672px; top: 186px; width: 404px; height: 64px;
+    font-family: 'Special Elite', monospace; color: #2b2118; mix-blend-mode: multiply; opacity: 0.88; }
+  .label .row { display: flex; justify-content: space-between; font-size: 19px; letter-spacing: 2px; margin-top: 4px; }
+  .label .dots { flex: 1; margin: 0 10px; border-bottom: 2px dotted rgba(43,33,24,0.55); transform: translateY(-6px); }
+  .label .line2 { font-size: 21px; margin-top: 7px; letter-spacing: 0.5px; }
+
+  .specs { position: absolute; left: 66px; top: 56px; font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px; letter-spacing: 3px; text-transform: uppercase; color: rgba(242,232,213,0.55); }
+  .title { position: absolute; left: 60px; top: 236px; font-family: 'Michroma', sans-serif;
+    font-size: 118px; line-height: 1; letter-spacing: 8px; color: #F2E8D5;
+    text-shadow: 0 0 24px rgba(255,166,60,0.35); }
+  .tagline { position: absolute; left: 66px; top: 372px; font-family: 'IBM Plex Mono', monospace;
+    font-size: 20px; line-height: 1.5; color: rgba(242,232,213,0.85); }
+</style>
+</head>
+<body>
+  <div class="banner">
+    <div class="specs">Windows · Linux · MIT</div>
+    <div class="title">HAT</div>
+    <div class="tagline">Several Claude Code accounts,<br>one shared memory.</div>
+    <div class="label">
+      <div class="row"><span>HAT-01</span><span class="dots"></span><span>SIDE A</span></div>
+      <div class="line2">one head, many hats</div>
+    </div>
+  </div>
+</body>
+</html>
