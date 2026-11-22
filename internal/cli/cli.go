@@ -41,6 +41,7 @@ Examples:
   hat client-a --resume
   hat usage --json
   hat statusline ~/.claude/statusline.sh
+  hat statusline sh ~/.claude/statusline.sh   the same on Windows, where a script needs sh
 
 Each account keeps its own sign-in in ~/.claude-<account>. Instructions,
 settings, skills, plugins, memory, and history are shared with the main
@@ -159,6 +160,8 @@ func (a App) launch(name string, claudeArgs []string) int {
 	if err != nil {
 		return a.fail(exitFailed, "%v.", err)
 	}
+	a.warnAboutAmbientCredentials(name)
+	a.warnWhenMainHasNoSharedFolders(name)
 	if err := a.prepare(acct); err != nil {
 		return a.fail(exitFailed, "%v", err)
 	}
@@ -187,6 +190,31 @@ func (a App) launch(name string, claudeArgs []string) int {
 		return a.fail(exitFailed, "couldn't start Claude (%s): %v. Install Claude Code, or check that \"claude\" runs on its own.", runner.Executable, err)
 	}
 	return code
+}
+
+// ambientCredentials are the variables Claude Code signs in with ahead of
+// the sign-in saved in its config folder.
+var ambientCredentials = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+
+func (a App) warnAboutAmbientCredentials(name string) {
+	for _, variable := range ambientCredentials {
+		if os.Getenv(variable) != "" {
+			fmt.Fprintf(a.Err, "hat: warning: %s is set, so Claude Code uses it instead of %s's own sign-in. To use %s's sign-in, %s.\n", variable, name, name, unsetForOneRun(variable, name))
+		}
+	}
+}
+
+func unsetForOneRun(variable, name string) string {
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf("run Remove-Item Env:%s in PowerShell, which clears it in this terminal only, then hat %s", variable, name)
+	}
+	return fmt.Sprintf("start it with env -u %s hat %s", variable, name)
+}
+
+func (a App) warnWhenMainHasNoSharedFolders(name string) {
+	if _, err := os.Stat(filepath.Join(a.Layout.MainDir, "projects")); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(a.Err, "hat: warning: run plain claude once first, so the shared folders exist in %s. Otherwise %s keeps its own copies instead of sharing main's.\n", a.Layout.MainDir, name)
+	}
 }
 
 const accountDirMode = 0o700
@@ -243,11 +271,18 @@ func (a App) remove(args []string) int {
 	if acct.Kind == account.Unmanaged {
 		return a.fail(exitBadArgs, "%s wasn't made by hat, so hat won't delete it. Delete it yourself if you mean to.", acct.ConfigDir)
 	}
+	if err := account.CheckNotLinked(acct); err != nil {
+		return a.fail(exitBadArgs, "%v.", err)
+	}
 
-	if err := os.RemoveAll(acct.ConfigDir); err != nil {
+	usageFile, _ := a.Layout.UsageFile(acct.ConfigDir)
+	if err := os.Remove(usageFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return a.fail(exitFailed, "couldn't delete %s's recorded usage in %s: %v. Nothing was removed. Fix that file's permissions and run hat rm %s again.", name, usageFile, err, name)
+	}
+	if err := account.Remove(acct); err != nil {
 		return a.fail(exitFailed, "couldn't delete all of %s: %v. Shared files are untouched. Close any Claude window running as %s and run hat rm %s again.", acct.ConfigDir, err, name, name)
 	}
-	fmt.Fprintf(a.Out, "Removed %s: its sign-in, connector sign-ins, and saved browser logins.\n", name)
+	fmt.Fprintf(a.Out, "Removed %s: its sign-in, connector sign-ins, saved browser logins, and recorded usage.\n", name)
 	fmt.Fprintf(a.Out, "Shared memory, settings, and skills are untouched in %s.\n", a.Layout.MainDir)
 	return exitOK
 }

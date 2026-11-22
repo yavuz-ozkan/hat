@@ -15,6 +15,7 @@ hat is for people who hold more than one legitimate account, such as a work seat
 - The native Claude Code install, from [Claude Code setup](https://code.claude.com/docs/en/setup). On Windows, hat refuses to run the npm install's `claude.cmd`, because arguments passed through `cmd.exe` could run commands.
 - Windows or Linux. macOS isn't supported yet; see [Limits](#limits).
 - On Windows, Developer Mode, so hat can link files between accounts. Turn it on in Settings > System > For developers. Folders use junctions, which need nothing.
+- Plain `claude` run at least once, so `~/.claude` has the folders accounts share. An account started before that keeps its own copies instead of sharing main's.
 
 ## Install
 
@@ -86,7 +87,7 @@ If Claude replaces a link with a real file or folder while saving, hat warns you
 
 - hat never writes to `~/.claude`, `~/.claude.json`, or a `~/.claude-*` folder it didn't make. A folder counts as hat's if it holds hat's `.hat` marker (or `.claude-as`, from before the rename), or if its `CLAUDE.md` links to main's.
 - New account folders are readable only by you (mode 0700 on Linux).
-- `hat rm` deletes the account's folder: its sign-in, connector sign-ins, and saved browser logins. It never deletes what the links point at. Your shared memory, settings, and skills stay in `~/.claude`.
+- `hat rm` deletes the account's folder, with its sign-in, connector sign-ins, and saved browser logins, and the usage hat recorded for it. It never deletes what the links point at. Your shared memory, settings, and skills stay in `~/.claude`.
 - `hat usage` and `hat statusline` never read a token and send nothing anywhere.
 - `hat usage --live` reads each account's sign-in token and sends it only to `api.anthropic.com`. It never prints or logs the token, and never follows a redirect elsewhere.
 - hat never renews a sign-in itself. When `--live` finds an expired one, it runs `claude mcp list` as that account and Claude renews it. Two programs renewing the same sign-in sign each other out.
@@ -114,7 +115,15 @@ With no command after it, `hat statusline` prints a short line like `Opus · 5h 
 }
 ```
 
-hat passes your command the same input, prints what it prints, and exits with its exit code. It runs your command directly, not through a shell, so wrap a shell snippet with pipes or `&&` as `hat statusline sh -c '...'`. On Windows, write paths with forward slashes, as Claude Code's [status line docs](https://code.claude.com/docs/en/statusline) explain.
+On Windows, which can't start a shell script directly, put `sh` in front of it:
+
+```json
+{
+  "statusLine": { "type": "command", "command": "hat statusline sh ~/.claude/statusline.sh" }
+}
+```
+
+hat passes your command the same input, prints what it prints, and exits with its exit code. It runs your command directly, not through a shell, so wrap a shell snippet with pipes or `&&` as `hat statusline sh -c '...'`. If your command can't start at all, hat prints why in the status line. On Windows, write paths with forward slashes, as Claude Code's [status line docs](https://code.claude.com/docs/en/statusline) explain.
 
 Claude Code sends `rate_limits` only for Pro, Max, and Ultra plans, and only after the first answer in a session. Until an account has used Claude with the status line set, `hat usage` says how to start recording for it. A window whose reset time has passed is left out, as Claude Code does.
 
@@ -146,11 +155,12 @@ Each entry is a file or folder name directly inside `~/.claude`. The next start 
 - Only the Claude Code CLI reads per-account folders. The desktop app and IDE extensions always use the main account.
 - The Claude in Chrome extension is signed in to one account at a time. Use agent-browser for browser work in several accounts at once.
 - The memory folder name copies Claude Code's own naming rule. If a Claude Code update changes that rule, accounts start a fresh memory for a project instead of sharing main's until hat catches up.
+- `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_AUTH_TOKEN` win over an account's own sign-in. hat warns when one is set at launch and leaves it alone.
 - No macOS yet. Claude Code keeps macOS sign-ins in the Keychain rather than in the config folder, so hat's per-folder model needs more work there.
 
 ## Maintaining
 
-Releases are tags. Push a tag like `v0.2.0` and the Release workflow tests it, builds Windows and Linux for Intel/AMD and ARM, publishes the archives with `checksums.txt`, and attests their build provenance. A tag like `v0.2.0-rc.1` becomes a pre-release, which installers and `hat upgrade` skip.
+Releases are tags. Push a tag like `v0.2.0` and the Release workflow tests it, builds Windows and Linux for Intel/AMD and ARM, publishes the archives with `checksums.txt`, and attests their build provenance. A tag like `v0.2.0-rc.1` becomes a pre-release, which installers and `hat upgrade` skip. A failed release run can be re-run for the same tag.
 
 To check that an archive was built by this repository's workflow:
 

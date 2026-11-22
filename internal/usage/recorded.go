@@ -83,14 +83,12 @@ func Load(path string) (Record, error) {
 	return record, nil
 }
 
-// namedWindows are the rate_limits keys that hold one {used_percentage,
-// resets_at} window each, in the order they're shown.
-var namedWindows = []struct{ Key, Label, Model string }{
-	{"five_hour", "5-hour", ""},
-	{"seven_day", "Week", ""},
-	{"seven_day_opus", "Week", "Opus"},
-	{"seven_day_sonnet", "Week", "Sonnet"},
-	{"seven_day_oauth_apps", "Week", "OAuth apps"},
+// namedWindows are the rate_limits windows hat shows, in order. The status
+// line sends five_hour and seven_day, each {used_percentage, resets_at in unix
+// seconds}, and spend_limit only through a gateway (Claude Code 2.1.330).
+var namedWindows = []struct{ Key, Label string }{
+	{"five_hour", "5-hour"},
+	{"seven_day", "Week"},
 }
 
 func LimitsFrom(rateLimits json.RawMessage) ([]Limit, error) {
@@ -101,47 +99,25 @@ func LimitsFrom(rateLimits json.RawMessage) ([]Limit, error) {
 	limits := []Limit{}
 	for _, named := range namedWindows {
 		var window struct {
-			UsedPercentage *float64        `json:"used_percentage"`
-			ResetsAt       json.RawMessage `json:"resets_at"`
+			UsedPercentage *float64 `json:"used_percentage"`
+			ResetsAt       *float64 `json:"resets_at"`
 		}
 		raw, ok := fields[named.Key]
 		if !ok || json.Unmarshal(raw, &window) != nil || window.UsedPercentage == nil {
 			continue
 		}
-		limits = append(limits, Limit{Kind: named.Key, Label: named.Label, Model: named.Model, Percent: *window.UsedPercentage, ResetsAt: parseResetsAt(window.ResetsAt)})
-	}
-	var perModel []struct {
-		DisplayName string          `json:"display_name"`
-		Utilization *float64        `json:"utilization"`
-		ResetsAt    json.RawMessage `json:"resets_at"`
-	}
-	if raw, ok := fields["model_scoped"]; ok && json.Unmarshal(raw, &perModel) == nil {
-		for _, window := range perModel {
-			if window.Utilization == nil {
-				continue
-			}
-			limits = append(limits, Limit{Kind: "model_scoped", Label: "Week", Model: window.DisplayName, Percent: *window.Utilization, ResetsAt: parseResetsAt(window.ResetsAt)})
-		}
+		limits = append(limits, Limit{Kind: named.Key, Label: named.Label, Percent: *window.UsedPercentage, ResetsAt: fromUnixSeconds(window.ResetsAt)})
 	}
 	return limits, nil
 }
 
-// parseResetsAt reads unix seconds, which the status line sends, or an ISO
-// time, which Claude Code's other usage data uses.
-func parseResetsAt(raw json.RawMessage) *time.Time {
-	var seconds float64
-	if json.Unmarshal(raw, &seconds) == nil {
-		whole, fraction := math.Modf(seconds)
-		at := time.Unix(int64(whole), int64(fraction*1e9))
-		return &at
+func fromUnixSeconds(seconds *float64) *time.Time {
+	if seconds == nil {
+		return nil
 	}
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		if at, err := time.Parse(time.RFC3339Nano, text); err == nil {
-			return &at
-		}
-	}
-	return nil
+	whole, fraction := math.Modf(*seconds)
+	at := time.Unix(int64(whole), int64(fraction*1e9))
+	return &at
 }
 
 const HowToRecord = `No usage recorded for this account yet. Set "statusLine" in Claude Code's settings.json to the command "hat statusline" (the README shows how), then send one message as this account.`

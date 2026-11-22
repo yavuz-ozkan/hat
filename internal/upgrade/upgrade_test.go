@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func zipBytes(t *testing.T, name string, content []byte) []byte {
@@ -168,6 +169,60 @@ func TestRunInstallsANewerRelease(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(exe); string(got) != "version 0.2.0" {
 		t.Errorf("program = %q", got)
+	}
+}
+
+func TestRunRefusesWhileAnotherUpgradeIsRunning(t *testing.T) {
+	releases := publishedRelease(t, "0.2.0", []byte("version 0.2.0"))
+	exe := installedProgram(t, "version 0.1.0")
+	if err := os.WriteFile(exe+lockSuffix, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Run(releases, "0.1.0", exe)
+
+	if err == nil || !strings.Contains(err.Error(), "another hat upgrade is running") || !strings.Contains(err.Error(), exe+lockSuffix) {
+		t.Errorf("err = %v", err)
+	}
+	if got, _ := os.ReadFile(exe); string(got) != "version 0.1.0" || releases.fetches != 0 {
+		t.Errorf("program = %q after %d downloads; want it untouched", got, releases.fetches)
+	}
+	if _, err := os.Stat(exe + lockSuffix); err != nil {
+		t.Errorf("removed the other upgrade's lock: %v", err)
+	}
+}
+
+func TestRunNeverRemovesAnOldLockItDidntCreate(t *testing.T) {
+	releases := publishedRelease(t, "0.2.0", []byte("version 0.2.0"))
+	exe := installedProgram(t, "version 0.1.0")
+	if err := os.WriteFile(exe+lockSuffix, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dayOld := time.Now().Add(-24 * time.Hour)
+	if err := os.Chtimes(exe+lockSuffix, dayOld, dayOld); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Run(releases, "0.1.0", exe)
+
+	if err == nil || !strings.Contains(err.Error(), "delete "+exe+lockSuffix) {
+		t.Errorf("err = %v, want it to name the lock to delete", err)
+	}
+	if _, err := os.Stat(exe + lockSuffix); err != nil {
+		t.Errorf("removed a lock it didn't create: %v", err)
+	}
+}
+
+func TestRunRemovesItsOwnLock(t *testing.T) {
+	releases := publishedRelease(t, "0.2.0", []byte("version 0.2.0"))
+	exe := installedProgram(t, "version 0.1.0")
+
+	if _, err := Run(releases, "0.1.0", exe); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(exe + lockSuffix); !os.IsNotExist(err) {
+		t.Errorf("left its lock behind: %v", err)
 	}
 }
 
@@ -431,7 +486,7 @@ func githubLike(t *testing.T, release *fakeReleases) GitHubReleases {
 	mux := http.NewServeMux()
 	mux.HandleFunc(releases+"/latest", func(w http.ResponseWriter, r *http.Request) {
 		if release.tag == "" {
-			http.Redirect(w, r, releases, http.StatusFound)
+			http.NotFound(w, r)
 			return
 		}
 		http.Redirect(w, r, releases+"/tag/"+release.tag, http.StatusFound)
@@ -491,6 +546,37 @@ func TestGitHubReleasesWithNoReleaseYet(t *testing.T) {
 	_, err := source.LatestTag()
 
 	if err == nil || !strings.Contains(err.Error(), "no published release") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func latestAnsweredWith(t *testing.T, answer http.HandlerFunc) GitHubReleases {
+	t.Helper()
+	srv := httptest.NewServer(answer)
+	t.Cleanup(srv.Close)
+	return GitHubReleases{ReleasesURL: srv.URL + "/yavuz-ozkan/hat/releases", Client: srv.Client()}
+}
+
+func TestGitHubReleasesSaysToTryAgainWhenGitHubFails(t *testing.T) {
+	source := latestAnsweredWith(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+
+	_, err := source.LatestTag()
+
+	if err == nil || !strings.Contains(err.Error(), "HTTP 503") || !strings.Contains(err.Error(), "again later") || strings.Contains(err.Error(), "no published release") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestGitHubReleasesSaysTheRepositoryMayHaveMoved(t *testing.T) {
+	source := latestAnsweredWith(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/someone-else/hat/releases/latest", http.StatusMovedPermanently)
+	})
+
+	_, err := source.LatestTag()
+
+	if err == nil || !strings.Contains(err.Error(), "may have moved") || !strings.Contains(err.Error(), "/someone-else/hat/releases/latest") {
 		t.Errorf("err = %v", err)
 	}
 }

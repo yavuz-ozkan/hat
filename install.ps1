@@ -43,12 +43,19 @@
             # Windows PowerShell 5.1 wraps the WebException; PowerShell 7 doesn't.
             $failure = $_.Exception
             if ($failure.InnerException -is [Net.WebException]) { $failure = $failure.InnerException }
-            if ($failure.Response) { Stop-Install "GitHub lists no published release at $releases yet." }
-            Stop-Install "couldn't reach GitHub to look up the newest release ($($failure.Message)). Check your connection, then run this again."
+            if (-not $failure.Response) {
+                Stop-Install "couldn't reach GitHub to look up the newest release ($($failure.Message)). Check your connection, then run this again."
+            }
+            $response = $failure.Response
         }
+        $status = [int]$response.StatusCode
         $location = $response.Headers['Location']
-        $response.Close()
-        if ($location -notmatch '/releases/tag/([^/]+)$') { Stop-Install "GitHub lists no published release at $releases yet." }
+        ([IDisposable]$response).Dispose()
+        if ($status -eq 404) { Stop-Install "GitHub lists no published release at $releases yet." }
+        if ($status -lt 300 -or $status -ge 400) { Stop-Install "GitHub answered HTTP $status when looking up the newest release. Run this again later." }
+        if ($location -notmatch '/releases/tag/([^/]+)$') {
+            Stop-Install "GitHub sent the newest-release lookup to '$location', which isn't a release page, so the repository may have moved. Find where hat lives now and install from there."
+        }
         $tag = $Matches[1]
     }
     $version = $tag.TrimStart('v')

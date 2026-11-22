@@ -21,8 +21,7 @@ type harness struct {
 
 func newHarness(t *testing.T) harness {
 	t.Helper()
-	home := t.TempDir()
-	l := layout.ForHome(home, layout.UserDirs{Config: filepath.Join(home, "config"), Cache: filepath.Join(home, "cache")})
+	l := testLayout(t.TempDir())
 	mustWrite(t, filepath.Join(l.MainDir, "projects", "repo", "memory", "MEMORY.md"), "shared memory")
 	mustWrite(t, filepath.Join(l.MainDir, "CLAUDE.md"), "shared instructions")
 	mustWrite(t, l.MainStateFile, `{"mcpServers":{"linear":{"type":"http","url":"https://mcp.linear.app/mcp"}}}`)
@@ -93,6 +92,53 @@ func TestRemoveDeletesAccountAndKeepsSharedMemory(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(h.layout.MainDir, "projects", "repo", "memory", "MEMORY.md"))
 	if err != nil || string(data) != "shared memory" {
 		t.Errorf("shared memory damaged: %q %v", data, err)
+	}
+}
+
+func TestRemoveDeletesTheAccountsRecordedUsage(t *testing.T) {
+	h := newHarness(t)
+	work := account.Named(h.layout, "work")
+	if err := h.app.prepare(work); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", work.ConfigDir)
+	h.runStatusLine(t, statusLineInput)
+	recorded, _ := h.layout.UsageFile(work.ConfigDir)
+	if _, err := os.Stat(recorded); err != nil {
+		t.Fatalf("nothing recorded to remove: %v", err)
+	}
+
+	code := h.app.Run([]string{"rm", "work"})
+
+	if _, err := os.Stat(recorded); code != exitOK || !os.IsNotExist(err) {
+		t.Errorf("exit %d, recorded usage still at %s: %v", code, recorded, err)
+	}
+}
+
+func TestRemoveThatCantFinishCanBeRunAgain(t *testing.T) {
+	h := newHarness(t)
+	work := account.Named(h.layout, "work")
+	if err := h.app.prepare(work); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, work.CredentialsFile, "{}")
+	release := makeUndeletable(t, filepath.Join(work.ConfigDir, "session-env"))
+
+	code := h.app.Run([]string{"rm", "work"})
+
+	if code != exitFailed || !strings.Contains(h.err.String(), "run hat rm work again") {
+		t.Fatalf("exit %d, stderr %q", code, h.err)
+	}
+	if account.Named(h.layout, "work").Kind != account.Managed {
+		t.Fatal("the half-deleted folder no longer counts as hat's, so rm can't be retried")
+	}
+	release()
+	h.err.Reset()
+	if code := h.app.Run([]string{"rm", "work"}); code != exitOK {
+		t.Errorf("second rm: exit %d, stderr %q", code, h.err)
+	}
+	if _, err := os.Stat(work.ConfigDir); !os.IsNotExist(err) {
+		t.Error("account folder still exists after the second rm")
 	}
 }
 
@@ -168,5 +214,27 @@ func TestMainIsRefusedAsAccountName(t *testing.T) {
 	}
 	if _, err := os.Stat(h.layout.AccountDir("main")); !os.IsNotExist(err) {
 		t.Error("created a folder for main")
+	}
+}
+
+func TestRemoveRefusesAnAccountFolderThatIsALink(t *testing.T) {
+	h := newHarness(t)
+	moved := filepath.Join(t.TempDir(), "work-moved")
+	work := account.Named(h.layout, "work")
+	if err := h.app.prepare(account.Account{Name: "work", Kind: account.Managed, ConfigDir: moved, CredentialsFile: filepath.Join(moved, ".credentials.json"), StateFile: filepath.Join(moved, ".claude.json")}); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(moved, "session-notes.md"), "the account's own files")
+	if err := os.Symlink(moved, work.ConfigDir); err != nil {
+		t.Skipf("can't create a folder link here: %v", err)
+	}
+
+	code := h.app.Run([]string{"rm", "work"})
+
+	if code != exitBadArgs || !strings.Contains(h.err.String(), "won't delete through it") {
+		t.Errorf("exit %d, stderr %q", code, h.err)
+	}
+	if got, err := os.ReadFile(filepath.Join(moved, "session-notes.md")); err != nil || string(got) != "the account's own files" {
+		t.Errorf("deleted through the link: %q %v", got, err)
 	}
 }

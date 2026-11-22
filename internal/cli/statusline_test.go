@@ -4,33 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/yavuz-ozkan/hat/internal/account"
 	"github.com/yavuz-ozkan/hat/internal/usage"
 )
-
-// TestMain lets a test run this test binary as someone's own status line
-// command, the same on Windows and Linux.
-func TestMain(m *testing.M) {
-	if os.Getenv("HAT_TEST_OWN_STATUS_LINE") == "1" {
-		input, _ := io.ReadAll(os.Stdin)
-		var line struct {
-			Model struct {
-				DisplayName string `json:"display_name"`
-			} `json:"model"`
-		}
-		_ = json.Unmarshal(input, &line)
-		fmt.Printf("my own line for %s", line.Model.DisplayName)
-		os.Exit(7)
-	}
-	os.Exit(m.Run())
-}
 
 const statusLineInput = `{"session_id":"5f1c","model":{"id":"claude-opus-4-5","display_name":"Opus"},` +
 	`"workspace":{"current_dir":"/home/someone/myapp"},"version":"2.1.330",` +
@@ -92,11 +75,12 @@ func TestStatuslineRecordsTheAccountsLimitsAndPrintsADefaultLine(t *testing.T) {
 	if code != exitOK || h.out.String() != "Opus · 5h 23% · week 41%\n" {
 		t.Errorf("exit %d, printed %q", code, h.out)
 	}
-	record, err := usage.Load(h.layout.UsageFile(work.ConfigDir))
+	workUsage, _ := h.layout.UsageFile(work.ConfigDir)
+	record, err := usage.Load(workUsage)
 	if err != nil || !strings.Contains(string(record.RateLimits), `"five_hour"`) || record.RecordedAt.IsZero() {
 		t.Errorf("record = %+v, %v", record, err)
 	}
-	if _, err := os.Stat(h.layout.UsageFile("")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(h.layout.UsageDir, "main.json")); !os.IsNotExist(err) {
 		t.Error("recorded the work account's limits as main's")
 	}
 	if after := filesOutsideTheCache(t, h); fmt.Sprint(before) != fmt.Sprint(after) {
@@ -125,7 +109,7 @@ func TestStatuslinePassesItsInputToYourOwnCommand(t *testing.T) {
 	if code != 7 || h.out.String() != "my own line for Opus" {
 		t.Errorf("exit %d, printed %q; want the command's own exit code and output", code, h.out)
 	}
-	if _, err := usage.Load(h.layout.UsageFile("")); err != nil {
+	if _, err := usage.Load(filepath.Join(h.layout.UsageDir, "main.json")); err != nil {
 		t.Errorf("wrapping a command skipped recording: %v", err)
 	}
 }
@@ -136,7 +120,23 @@ func TestStatuslineSaysSoWhenYourCommandWontStart(t *testing.T) {
 
 	code := h.runStatusLine(t, statusLineInput, filepath.Join(t.TempDir(), "no-such-command"))
 
-	if code == exitOK || !strings.Contains(h.out.String(), "Fix the command") {
+	if code != exitOK || !strings.Contains(h.out.String(), "Fix the command") {
+		t.Errorf("exit %d, printed %q; want exit 0, since Claude Code hides the output of a failed status line", code, h.out)
+	}
+}
+
+func TestStatuslineOnWindowsSaysToPutShInFrontOfAScript(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("only Windows can't start a .sh script directly")
+	}
+	h := newHarness(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	script := filepath.Join(t.TempDir(), "statusline.sh")
+	mustWrite(t, script, "#!/bin/sh\necho mine\n")
+
+	code := h.runStatusLine(t, statusLineInput, script)
+
+	if code != exitOK || !strings.Contains(h.out.String(), "hat statusline sh "+script) {
 		t.Errorf("exit %d, printed %q", code, h.out)
 	}
 }

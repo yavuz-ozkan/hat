@@ -22,24 +22,18 @@ func TestUsageFileIsNamedForTheConfigFolder(t *testing.T) {
 		l.AccountDir("work"): "claude-work.json",
 	}
 	for configDir, want := range cases {
-		if got := l.UsageFile(configDir); got != filepath.Join(l.UsageDir, want) {
-			t.Errorf("UsageFile(%q) = %s, want %s in %s", configDir, got, want, l.UsageDir)
+		if got, listed := l.UsageFile(configDir); !listed || got != filepath.Join(l.UsageDir, want) {
+			t.Errorf("UsageFile(%q) = %s, %t, want %s in %s", configDir, got, listed, want, l.UsageDir)
 		}
 	}
 }
 
-func TestUsageFileKeepsFoldersOutsideHomeApart(t *testing.T) {
+func TestUsageFileIsNotListedForFoldersHatUsageNeverShows(t *testing.T) {
 	l := testLayout(t)
-	elsewhere := filepath.Join(t.TempDir(), ".claude-work")
-	other := filepath.Join(t.TempDir(), ".claude-work")
-
-	a, b := l.UsageFile(elsewhere), l.UsageFile(other)
-
-	if a == b || a == l.UsageFile(l.AccountDir("work")) {
-		t.Errorf("folders share a usage file: %s, %s", a, b)
-	}
-	if !strings.HasPrefix(filepath.Base(a), "elsewhere-") || filepath.Dir(a) != l.UsageDir {
-		t.Errorf("UsageFile(%q) = %s", elsewhere, a)
+	for _, configDir := range []string{filepath.Join(t.TempDir(), ".claude-work"), filepath.Join(l.Home, "claude-work"), l.AccountDir("")} {
+		if got, listed := l.UsageFile(configDir); listed {
+			t.Errorf("UsageFile(%q) = %s, want it not listed", configDir, got)
+		}
 	}
 }
 
@@ -48,7 +42,7 @@ func TestUsageFileIgnoresCaseOnWindows(t *testing.T) {
 		t.Skip("only Windows paths are case-insensitive")
 	}
 	l := testLayout(t)
-	if got := l.UsageFile(strings.ToUpper(l.AccountDir("work"))); got != filepath.Join(l.UsageDir, "claude-work.json") {
+	if got, _ := l.UsageFile(strings.ToUpper(l.AccountDir("work"))); got != filepath.Join(l.UsageDir, "claude-work.json") {
 		t.Errorf("UsageFile with other case = %s", got)
 	}
 }

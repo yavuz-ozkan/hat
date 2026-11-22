@@ -1,8 +1,6 @@
 package layout
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -57,25 +55,24 @@ func (l Layout) AccountDir(name string) string {
 }
 
 // UsageFile is where the plan limits seen by the account in configDir are
-// recorded. An empty configDir means the main account, matching how Claude
-// Code treats an unset CLAUDE_CONFIG_DIR.
-func (l Layout) UsageFile(configDir string) string {
+// recorded, for the folders "hat usage" lists: the main one and each
+// ~/.claude-<name>. For any other folder listed is false and nothing is
+// recorded, since nothing would ever show it. An empty configDir means the
+// main account, matching how Claude Code treats an unset CLAUDE_CONFIG_DIR.
+func (l Layout) UsageFile(configDir string) (path string, listed bool) {
 	if configDir == "" {
 		configDir = l.MainDir
 	}
 	dir := filepath.Clean(configDir)
 	base := foldCase(filepath.Base(dir))
-	var name string
 	switch {
 	case samePath(dir, l.MainDir):
-		name = "main"
+		return filepath.Join(l.UsageDir, "main.json"), true
 	case samePath(filepath.Dir(dir), l.Home) && strings.HasPrefix(base, AccountDirPrefix) && base != AccountDirPrefix:
-		name = strings.TrimPrefix(base, ".")
+		return filepath.Join(l.UsageDir, strings.TrimPrefix(base, ".")+".json"), true
 	default:
-		sum := sha256.Sum256([]byte(foldCase(dir)))
-		name = "elsewhere-" + hex.EncodeToString(sum[:8])
+		return "", false
 	}
-	return filepath.Join(l.UsageDir, name+".json")
 }
 
 func samePath(a, b string) bool {

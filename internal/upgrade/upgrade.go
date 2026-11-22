@@ -49,6 +49,11 @@ type Result struct {
 // Run installs the newest release over exePath when it's newer than the
 // running version. A development build (no version number) counts as older.
 func Run(src Source, current, exePath string) (Result, error) {
+	unlock, err := lockUpgrade(exePath)
+	if err != nil {
+		return Result{}, err
+	}
+	defer unlock()
 	tag, err := src.LatestTag()
 	if err != nil {
 		return Result{}, err

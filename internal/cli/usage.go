@@ -57,7 +57,8 @@ func (a App) recordedRows(accounts []account.Account) []usage.Row {
 	now := time.Now()
 	rows := make([]usage.Row, 0, len(accounts))
 	for _, acct := range accounts {
-		rows = append(rows, usage.Recorded(acct, a.Layout.UsageFile(acct.ConfigDir), now))
+		path, _ := a.Layout.UsageFile(acct.ConfigDir)
+		rows = append(rows, usage.Recorded(acct, path, now))
 	}
 	return rows
 }

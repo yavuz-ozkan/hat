@@ -5,16 +5,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestKeyMatchesClaudeFolderNames(t *testing.T) {
 	cases := map[string]string{
-		`C:\Windows\System32`:       "C--Windows-System32",
-		`C:\dev\git\myapp`:          "C--dev-git-myapp",
-		"/home/someone/src/my.repo": "-home-someone-src-my-repo",
-		`c:\Users\someone\jolie`:    "c--Users-someone-jolie",
+		`C:\Windows\System32`:         "C--Windows-System32",
+		`C:\dev\git\myapp`:            "C--dev-git-myapp",
+		"/home/someone/src/my.repo":   "-home-someone-src-my-repo",
+		`c:\Users\someone\jolie`:      "c--Users-someone-jolie",
+		"/home/someone/caf\u00e9":     "-home-someone-caf-",
+		"/home/someone/\U0001F680app": "-home-someone---app",
 	}
 	for root, want := range cases {
 		if got := Key(root); got != want {
@@ -45,17 +48,27 @@ func TestProjectRootOutsideGitIsTheFolder(t *testing.T) {
 	}
 }
 
-func TestProjectRootMapsSubfoldersAndWorktreesToTheRepo(t *testing.T) {
+func needGit(t *testing.T) {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	base := t.TempDir()
-	repo := filepath.Join(base, "repo")
+}
+
+func repoWithACommit(t *testing.T, repo string) {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Join(repo, "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	runGit(t, repo, "init", "-q")
 	runGit(t, repo, "commit", "-q", "--allow-empty", "-m", "start")
+}
+
+func TestProjectRootMapsSubfoldersAndWorktreesToTheRepo(t *testing.T) {
+	needGit(t)
+	base := t.TempDir()
+	repo := filepath.Join(base, "repo")
+	repoWithACommit(t, repo)
 	worktree := filepath.Join(base, "repo-feature")
 	runGit(t, repo, "worktree", "add", "-q", worktree)
 
@@ -63,6 +76,54 @@ func TestProjectRootMapsSubfoldersAndWorktreesToTheRepo(t *testing.T) {
 		if got := ProjectRoot(dir); !sameFolder(got, repo) {
 			t.Errorf("ProjectRoot(%q) = %q, want the repo %q", dir, got, repo)
 		}
+	}
+}
+
+func TestProjectRootOfABareReposWorktreeIsTheBareRepo(t *testing.T) {
+	needGit(t)
+	base := t.TempDir()
+	repoWithACommit(t, filepath.Join(base, "source"))
+	bare := filepath.Join(base, "project")
+	runGit(t, base, "clone", "-q", "--bare", filepath.Join(base, "source"), bare)
+	worktree := filepath.Join(base, "project-main")
+	runGit(t, bare, "worktree", "add", "-q", worktree)
+
+	if got := ProjectRoot(worktree); !sameFolder(got, bare) {
+		t.Errorf("ProjectRoot(%q) = %q, want the bare repo %q", worktree, got, bare)
+	}
+}
+
+func TestProjectRootOfASubmoduleIsTheSubmodule(t *testing.T) {
+	needGit(t)
+	base := t.TempDir()
+	repoWithACommit(t, filepath.Join(base, "lib"))
+	super := filepath.Join(base, "super")
+	repoWithACommit(t, super)
+	runGit(t, super, "-c", "protocol.file.allow=always", "submodule", "add", "-q", filepath.Join(base, "lib"), "lib")
+	submodule := filepath.Join(super, "lib")
+
+	if got := ProjectRoot(submodule); !sameFolder(got, submodule) {
+		t.Errorf("ProjectRoot(%q) = %q, want the submodule itself", submodule, got)
+	}
+}
+
+func TestSettingsArgsKeyByThePhysicalFolderOnUnix(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Claude keys by the folder as given on Windows")
+	}
+	physical, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "through-a-link")
+	if err := os.Symlink(physical, link); err != nil {
+		t.Fatal(err)
+	}
+
+	args := SettingsArgs("main", link)
+
+	if len(args) != 2 || !strings.Contains(args[1], Key(physical)) {
+		t.Errorf("args = %v, want the key of %s", args, physical)
 	}
 }
 

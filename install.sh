@@ -32,13 +32,20 @@ main() {
 	else
 		# /releases/latest redirects to /releases/tag/<tag>; reading where it
 		# points needs no GitHub API token. No -f: a 404 means no release yet,
-		# which the check below explains better than curl would.
-		latest=$(curl -sS -I -o /dev/null -w '%{redirect_url}' "$releases/latest") ||
+		# which the checks below explain better than curl would.
+		answer=$(curl -sS -I -o /dev/null -w '%{http_code} %{redirect_url}' "$releases/latest") ||
 			fail "couldn't reach GitHub to look up the newest release. Check your connection, then run this again."
+		status=${answer%% *}
+		latest=${answer#* }
+		case "$status" in
+		404) fail "GitHub lists no published release at $releases yet." ;;
+		3??) ;;
+		*) fail "GitHub answered HTTP $status when looking up the newest release. Run this again later." ;;
+		esac
 		tag=${latest##*/}
 		case "$latest" in
-		*/releases/tag/*) ;;
-		*) fail "GitHub lists no published release at $releases yet." ;;
+		*/releases/tag/"$tag") ;;
+		*) fail "GitHub sent the newest-release lookup to '$latest', which isn't a release page, so the repository may have moved. Find where hat lives now and install from there." ;;
 		esac
 	fi
 	version=${tag#v}

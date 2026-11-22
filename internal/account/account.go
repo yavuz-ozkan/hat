@@ -116,6 +116,53 @@ func MarkManaged(dir string) error {
 	return os.WriteFile(path, []byte("This folder is managed by hat.\n"), 0o644)
 }
 
+// Remove deletes a managed account's folder, its marker last. A folder that
+// can't be emptied, say because a running Claude holds a file open, still
+// has the marker afterwards, so it stays hat's and hat rm can try again.
+// CheckNotLinked refuses an account folder that is itself a link: deleting
+// through it would empty the folder it points to.
+func CheckNotLinked(acct Account) error {
+	// Go reports a Windows junction as irregular rather than as a symlink.
+	if info, err := os.Lstat(acct.ConfigDir); err == nil && info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return fmt.Errorf("%s is a link to another folder, so hat won't delete through it. Delete the link itself if you mean to; that leaves the folder it points to alone", acct.ConfigDir)
+	}
+	return nil
+}
+
+func Remove(acct Account) error {
+	if err := CheckNotLinked(acct); err != nil {
+		return err
+	}
+	if err := MarkManaged(acct.ConfigDir); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(acct.ConfigDir)
+	if err != nil {
+		return err
+	}
+	var firstFailure error
+	for _, entry := range entries {
+		if entry.Name() == markerFile {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(acct.ConfigDir, entry.Name())); err != nil && firstFailure == nil {
+			firstFailure = err
+		}
+	}
+	if firstFailure != nil {
+		return firstFailure
+	}
+	if err := os.Remove(filepath.Join(acct.ConfigDir, markerFile)); err != nil {
+		return err
+	}
+	if err := os.Remove(acct.ConfigDir); err != nil {
+		// Something appeared in the folder, or held it open, after the sweep.
+		_ = MarkManaged(acct.ConfigDir)
+		return err
+	}
+	return nil
+}
+
 func kindOf(l layout.Layout, dir string) Kind {
 	if notCreatedYet(dir) || hasMarker(dir) || madeByOldScript(l, dir) {
 		return Managed

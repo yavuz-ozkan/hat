@@ -13,8 +13,7 @@ import (
 )
 
 // statusLineInput is shaped like what Claude Code 2.1.330 sends its status
-// line, plus the optional windows its structured usage data can carry and a
-// key hat doesn't know.
+// line, including the spend_limit it adds through a gateway.
 const statusLineInput = `{
   "session_id": "5f1c",
   "cwd": "/home/someone/myapp",
@@ -26,13 +25,7 @@ const statusLineInput = `{
   "rate_limits": {
     "five_hour": {"used_percentage": 23.4, "resets_at": 1795680000},
     "seven_day": {"used_percentage": 41, "resets_at": 1795600000},
-    "seven_day_opus": {"used_percentage": 12.5, "resets_at": "2026-11-27T09:00:00Z"},
-    "seven_day_sonnet": null,
-    "spend_limit": {"used_percentage": 3, "resets_at": 1795600000},
-    "model_scoped": [
-      {"display_name": "Fable", "utilization": 64, "resets_at": "2026-11-27T09:00:00Z"},
-      {"display_name": "Haiku", "utilization": null, "resets_at": null}
-    ]
+    "spend_limit": {"used_percentage": 3, "resets_at": 1795600000}
   }
 }`
 
@@ -47,7 +40,7 @@ func TestLimitsFromTheStatusLineShape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if line.Model.DisplayName != "Opus" || len(limits) != 4 {
+	if line.Model.DisplayName != "Opus" || len(limits) != 2 {
 		t.Fatalf("model %q, limits %+v", line.Model.DisplayName, limits)
 	}
 	fiveHour := limits[0]
@@ -57,11 +50,13 @@ func TestLimitsFromTheStatusLineShape(t *testing.T) {
 	if week := limits[1]; week.Kind != "seven_day" || week.Label != "Week" || week.Percent != 41 {
 		t.Errorf("seven_day = %+v", week)
 	}
-	if opus := limits[2]; opus.Model != "Opus" || opus.ResetsAt == nil || !opus.ResetsAt.Equal(time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC)) {
-		t.Errorf("seven_day_opus with an ISO reset = %+v", opus)
-	}
-	if fable := limits[3]; fable.Kind != "model_scoped" || fable.Model != "Fable" || fable.Percent != 64 {
-		t.Errorf("model_scoped = %+v", fable)
+}
+
+func TestLimitsFromLeavesANullResetTimeUnknown(t *testing.T) {
+	limits, err := LimitsFrom([]byte(`{"five_hour": {"used_percentage": 23, "resets_at": null}}`))
+
+	if err != nil || len(limits) != 1 || limits[0].ResetsAt != nil {
+		t.Errorf("limits = %+v, %v; want one limit with no reset time", limits, err)
 	}
 }
 
@@ -120,7 +115,7 @@ func TestRecordedShowsTheSavedLimitsAndWhenTheyWereSeen(t *testing.T) {
 
 	row := Recorded(acct, path, now)
 
-	if row.Problem != nil || len(row.Limits) != 4 || row.Email != "work@example.com" {
+	if row.Problem != nil || len(row.Limits) != 2 || row.Email != "work@example.com" {
 		t.Fatalf("row = %+v", row)
 	}
 	if row.AsOf == nil || !row.AsOf.Equal(now.Add(-12*time.Minute)) {
