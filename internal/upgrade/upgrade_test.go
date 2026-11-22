@@ -569,6 +569,19 @@ func TestGitHubReleasesSaysToTryAgainWhenGitHubFails(t *testing.T) {
 	}
 }
 
+// What github.com does while a repository has only pre-releases.
+func TestGitHubReleasesWithOnlyPreReleases(t *testing.T) {
+	source := latestAnsweredWith(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/yavuz-ozkan/hat/releases", http.StatusFound)
+	})
+
+	_, err := source.LatestTag()
+
+	if err == nil || !strings.Contains(err.Error(), "no published release") || strings.Contains(err.Error(), "moved") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestGitHubReleasesSaysTheRepositoryMayHaveMoved(t *testing.T) {
 	source := latestAnsweredWith(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/someone-else/hat/releases/latest", http.StatusMovedPermanently)

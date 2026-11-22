@@ -53,6 +53,9 @@
         ([IDisposable]$response).Dispose()
         if ($status -eq 404) { Stop-Install "GitHub lists no published release at $releases yet." }
         if ($status -lt 300 -or $status -ge 400) { Stop-Install "GitHub answered HTTP $status when looking up the newest release. Run this again later." }
+        # With only pre-releases published, GitHub redirects to the releases
+        # list instead of answering 404.
+        if ($location -and $location.TrimEnd('/') -eq $releases) { Stop-Install "GitHub lists no published release at $releases yet." }
         if ($location -notmatch '/releases/tag/([^/]+)$') {
             Stop-Install "GitHub sent the newest-release lookup to '$location', which isn't a release page, so the repository may have moved. Find where hat lives now and install from there."
         }

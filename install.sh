@@ -43,8 +43,11 @@ main() {
 		*) fail "GitHub answered HTTP $status when looking up the newest release. Run this again later." ;;
 		esac
 		tag=${latest##*/}
+		# With only pre-releases published, GitHub redirects to the releases
+		# list instead of answering 404.
 		case "$latest" in
 		*/releases/tag/"$tag") ;;
+		"$releases" | "$releases/") fail "GitHub lists no published release at $releases yet." ;;
 		*) fail "GitHub sent the newest-release lookup to '$latest', which isn't a release page, so the repository may have moved. Find where hat lives now and install from there." ;;
 		esac
 	fi
