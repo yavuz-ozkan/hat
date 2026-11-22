@@ -582,6 +582,18 @@ func TestGitHubReleasesWithOnlyPreReleases(t *testing.T) {
 	}
 }
 
+func TestGitHubReleasesTreatsTheSamePathOnAnotherHostAsMoved(t *testing.T) {
+	source := latestAnsweredWith(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://example.com/yavuz-ozkan/hat/releases", http.StatusFound)
+	})
+
+	_, err := source.LatestTag()
+
+	if err == nil || !strings.Contains(err.Error(), "may have moved") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestGitHubReleasesSaysTheRepositoryMayHaveMoved(t *testing.T) {
 	source := latestAnsweredWith(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/someone-else/hat/releases/latest", http.StatusMovedPermanently)
