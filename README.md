@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/banner.svg" alt="hat: one head, many hats. Several Claude Code accounts, one shared memory." width="100%"></p>
+<p align="center"><img src="assets/banner.jpg" alt="A clear cassette tape labeled HAT-01, one head, many hats, with four colored cables plugged into it. Several Claude Code accounts, one shared memory." width="100%"></p>
 
 Claude Code signs in one account per config folder. If you have a second account, you either sign out and back in every time you switch, or you give it a fresh folder that shares nothing: no instructions, no skills, no memory, no history.
 
@@ -169,6 +169,8 @@ gh attestation verify hat_0.2.0_linux_amd64.tar.gz --repo yavuz-ozkan/hat
 ```
 
 To build from source, run `go build -o hat .` with Go 1.26 or newer. [REVIEW.md](REVIEW.md) lists what a change must not break.
+
+The banner is `assets/banner-source/banner.html` over a generated photo. To change its text, edit that file and render it with headless Chrome at 1280×640 (scale 1.386 for the full-size `banner.jpg`).
 
 ## License
 
