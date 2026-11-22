@@ -6,8 +6,6 @@ on:
 
 permissions:
   contents: write
-  # Build provenance: the job signs with its OIDC identity and stores the
-  # attestation on the repository.
   id-token: write
   attestations: write
 
@@ -18,14 +16,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # GoReleaser publishes with GITHUB_TOKEN from the environment, so
-          # nothing later in the job needs the token left in .git/config.
           persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-          # A release builds from a clean module cache, never one another
-          # workflow run could have written.
           cache: false
       - run: go test -count=1 ./...
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0

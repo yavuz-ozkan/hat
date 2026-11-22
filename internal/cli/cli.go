@@ -52,13 +52,13 @@ undocumented Anthropic endpoint that may change or stop working.
 `
 
 type App struct {
-	Layout   layout.Layout
-	In       io.Reader
-	Out      io.Writer
-	Err      io.Writer
-	Version  string
-	Releases upgrade.Source
-	SelfPath string
+	Layout        layout.Layout
+	In            io.Reader
+	Out           io.Writer
+	Err           io.Writer
+	Version       string
+	Releases      upgrade.Source
+	InstalledPath func() (string, error)
 }
 
 func (a App) commands() map[string]func(args []string) int {
@@ -79,10 +79,11 @@ func (a App) upgrade(args []string) int {
 	if len(args) != 0 {
 		return a.fail(exitBadArgs, "upgrade takes no arguments. Run hat upgrade.")
 	}
-	if a.SelfPath == "" {
-		return a.fail(exitFailed, "couldn't work out where this hat is installed, so it can't replace itself. Reinstall with install.sh or install.ps1 instead.")
+	exePath, err := a.InstalledPath()
+	if err != nil {
+		return a.fail(exitFailed, "couldn't work out where this hat is installed (%v), so it can't replace itself. Reinstall with install.sh or install.ps1 instead.", err)
 	}
-	result, err := upgrade.Run(a.Releases, a.Version, a.SelfPath)
+	result, err := upgrade.Run(a.Releases, a.Version, exePath)
 	var notRestored *upgrade.NotRestoredError
 	if errors.As(err, &notRestored) {
 		return a.fail(exitFailed, "%v.", err)
@@ -187,8 +188,6 @@ func (a App) launch(name string, claudeArgs []string) int {
 	return code
 }
 
-// accountDirMode keeps an account folder, which holds its sign-in, readable
-// only by you.
 const accountDirMode = 0o700
 
 func (a App) prepare(acct account.Account) error {

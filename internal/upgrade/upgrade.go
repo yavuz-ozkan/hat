@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 	"strings"
 
@@ -77,8 +78,6 @@ func Run(src Source, current, exePath string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	// The bytes that pass the checksum are the bytes unpacked. Reading the
-	// archive back from disk would leave a gap for it to change in between.
 	if err := verify(asset, archive, checksums); err != nil {
 		return Result{}, err
 	}
@@ -86,14 +85,12 @@ func Run(src Source, current, exePath string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	if err := replace(exePath, binary); err != nil {
+	if err := (swapper{rename: os.Rename}).replace(exePath, binary); err != nil {
 		return Result{}, err
 	}
 	return Result{From: current, To: latest, Outcome: Installed}, nil
 }
 
-// compareVersions orders current against latest by semantic versioning. A
-// current that isn't a version number, such as a "dev" build, sorts first.
 func compareVersions(current, latest string) (int, error) {
 	if !semver.IsValid("v" + latest) {
 		return 0, fmt.Errorf("not a version: %q", latest)

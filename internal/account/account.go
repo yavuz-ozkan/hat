@@ -21,9 +21,7 @@ const (
 )
 
 const (
-	markerFile = ".hat"
-	// legacyMarkerFile is what hat left in a folder back when it was called
-	// claude-as. Those folders are still hat's to manage.
+	markerFile       = ".hat"
 	legacyMarkerFile = ".claude-as"
 	credentialsFile  = ".credentials.json"
 )
@@ -139,8 +137,6 @@ func hasMarker(dir string) bool {
 	return false
 }
 
-// The PowerShell script that came before hat left no marker, but every
-// folder it made has a CLAUDE.md linked to the main folder's.
 func madeByOldScript(l layout.Layout, dir string) bool {
 	return share.IsLinkTo(filepath.Join(dir, "CLAUDE.md"), filepath.Join(l.MainDir, "CLAUDE.md"))
 }

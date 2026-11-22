@@ -20,8 +20,6 @@ const (
 	renewMargin = time.Minute
 )
 
-// LiveClient never follows a redirect: the request carries the account's
-// token, and a redirect would hand it to whatever host the answer names.
 func LiveClient() *http.Client {
 	return &http.Client{
 		Timeout:       15 * time.Second,
@@ -84,8 +82,6 @@ func (c Checker) fetch(token string, acct account.Account) ([]Limit, *Problem) {
 		return nil, &Problem{UnexpectedResponse, fmt.Sprintf("Usage check failed with HTTP %d. Try again; if it keeps failing, Anthropic may have changed the usage endpoint. Plain hat usage doesn't depend on it.", resp.StatusCode)}
 	}
 
-	// Kind, limits, and percent are required: if Anthropic renames one, decoding
-	// would quietly give an empty list or 0%, which reads as a real answer.
 	var body struct {
 		Limits *[]struct {
 			Kind     string   `json:"kind"`

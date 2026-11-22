@@ -160,7 +160,7 @@ func TestItemsAddsExtrasWithoutDuplicates(t *testing.T) {
 	}
 }
 
-func firstAs[T error](warnings []error) (T, bool) {
+func firstAs[T error](warnings Warnings) (T, bool) {
 	var zero T
 	if len(warnings) == 0 {
 		return zero, false

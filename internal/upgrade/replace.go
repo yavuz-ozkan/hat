@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-// movedAsideMarker is in every name hat gives a program it moved aside.
-// It's specific to hat so a backup someone names by hand never matches.
 const movedAsideMarker = ".moved-aside-by-hat-"
 
 // movedAsidePath gives each replaced Windows program its own name. Windows
@@ -20,11 +18,14 @@ func movedAsidePath(exePath string) string {
 	return fmt.Sprintf("%s%s%d", exePath, movedAsideMarker, time.Now().UnixNano())
 }
 
-// rename is os.Rename; tests swap it to make the Windows swap fail.
-var rename = os.Rename
+func InstalledPath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(exe)
+}
 
-// NotRestoredError means the new program couldn't be put in place and the old
-// one couldn't be put back either, so hat is only at MovedTo.
 type NotRestoredError struct {
 	ExePath, MovedTo string
 	Install, Restore error
@@ -35,30 +36,34 @@ func (e *NotRestoredError) Error() string {
 		"Your previous hat is at %s: rename it to %s to keep using it", e.Install, e.Restore, e.MovedTo, filepath.Base(e.ExePath))
 }
 
+type swapper struct {
+	rename func(from, to string) error
+}
+
 // replace writes the new program beside the old one before swapping, so a
 // failed write leaves the old one working. Windows won't overwrite a running
 // program but will rename it, so there the old one moves aside first and is
 // deleted on a later start.
-func replace(exePath string, binary []byte) error {
+func (s swapper) replace(exePath string, binary []byte) error {
 	next, err := stage(exePath, binary)
 	if err != nil {
 		return err
 	}
 	if runtime.GOOS != "windows" {
-		if err := rename(next, exePath); err != nil {
+		if err := s.rename(next, exePath); err != nil {
 			_ = os.Remove(next)
 			return err
 		}
 		return nil
 	}
 	old := movedAsidePath(exePath)
-	if err := rename(exePath, old); err != nil {
+	if err := s.rename(exePath, old); err != nil {
 		_ = os.Remove(next)
 		return fmt.Errorf("couldn't move the running hat aside: %w", err)
 	}
-	if err := rename(next, exePath); err != nil {
+	if err := s.rename(next, exePath); err != nil {
 		_ = os.Remove(next)
-		if restoreErr := rename(old, exePath); restoreErr != nil {
+		if restoreErr := s.rename(old, exePath); restoreErr != nil {
 			return &NotRestoredError{ExePath: exePath, MovedTo: old, Install: err, Restore: restoreErr}
 		}
 		return err
@@ -66,8 +71,6 @@ func replace(exePath string, binary []byte) error {
 	return nil
 }
 
-// stage writes the new program to a uniquely named file beside exePath, so two
-// upgrades running at once never write into the same file.
 func stage(exePath string, binary []byte) (string, error) {
 	f, err := os.CreateTemp(filepath.Dir(exePath), filepath.Base(exePath)+".new-*")
 	if err != nil {
@@ -107,8 +110,6 @@ func RemoveReplacedWindowsBinaries(exePath string) {
 	}
 }
 
-// isMovedAside matches only the names movedAsidePath and install.ps1 create,
-// "<exe>.moved-aside-by-hat-<digits>".
 func isMovedAside(exeName, name string) bool {
 	suffix, ok := strings.CutPrefix(name, exeName+movedAsideMarker)
 	if !ok || suffix == "" {

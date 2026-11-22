@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,6 +143,17 @@ func TestCommandNameIsRefusedAsAccountName(t *testing.T) {
 	code := h.app.Run([]string{"rm", "usage"})
 
 	if code != exitBadArgs || !strings.Contains(h.err.String(), "is a hat command") || !strings.Contains(h.err.String(), "usage-account") {
+		t.Errorf("exit %d, stderr %q", code, h.err)
+	}
+}
+
+func TestUpgradeSaysSoWhenItCantFindItself(t *testing.T) {
+	h := newHarness(t)
+	h.app.InstalledPath = func() (string, error) { return "", errors.New("executable path unavailable") }
+
+	code := h.app.Run([]string{"upgrade"})
+
+	if code != exitFailed || !strings.Contains(h.err.String(), "couldn't work out where this hat is installed (executable path unavailable)") {
 		t.Errorf("exit %d, stderr %q", code, h.err)
 	}
 }

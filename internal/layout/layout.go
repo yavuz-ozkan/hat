@@ -18,13 +18,9 @@ type Layout struct {
 	// not inside it, because the main account runs with CLAUDE_CONFIG_DIR unset.
 	MainStateFile string
 	ConfigFile    string
-	// UsageDir is in the user cache folder rather than a Claude config folder,
-	// so recording usage never writes anything Claude reads.
-	UsageDir string
+	UsageDir      string
 }
 
-// UserDirs are the per-user folders the operating system sets aside for
-// settings and for caches.
 type UserDirs struct {
 	Config string
 	Cache  string
@@ -62,9 +58,7 @@ func (l Layout) AccountDir(name string) string {
 
 // UsageFile is where the plan limits seen by the account in configDir are
 // recorded. An empty configDir means the main account, matching how Claude
-// Code treats an unset CLAUDE_CONFIG_DIR. Account folders in the home folder
-// get readable names; a config folder anywhere else is named by a hash of its
-// path, so two folders never share a file.
+// Code treats an unset CLAUDE_CONFIG_DIR.
 func (l Layout) UsageFile(configDir string) string {
 	if configDir == "" {
 		configDir = l.MainDir

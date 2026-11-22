@@ -25,8 +25,6 @@ func (a App) statusline(command []string) int {
 	return showStatusLine(a.Out, a.Err, command, input, line)
 }
 
-// StatusLineWithoutRecording is the status line for when hat can't find its
-// own folders: there's nowhere to record usage, but the line still shows.
 func StatusLineWithoutRecording(in io.Reader, out, errOut io.Writer, command []string) int {
 	input, _ := io.ReadAll(in)
 	line, _ := usage.ParseStatusLine(input)
@@ -41,8 +39,6 @@ func showStatusLine(out, errOut io.Writer, command []string, input []byte, line 
 	return exitOK
 }
 
-// passStatusLineTo runs someone's own status line command with the input
-// Claude gave hat, so wrapping it in "hat statusline" changes nothing they see.
 func passStatusLineTo(out, errOut io.Writer, command []string, input []byte) int {
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Stdin = bytes.NewReader(input)

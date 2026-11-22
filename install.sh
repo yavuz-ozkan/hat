@@ -55,8 +55,6 @@ main() {
 	tar -xzf "$tmp/$asset" -C "$tmp" hat
 
 	mkdir -p "$bin_dir"
-	# Stage beside the target, then rename: a failed copy never leaves a broken
-	# hat in place.
 	staged=$(mktemp "$bin_dir/.hat.XXXXXX")
 	if ! install -m 755 "$tmp/hat" "$staged" || ! mv -f "$staged" "$bin_dir/hat"; then
 		rm -f "$staged"

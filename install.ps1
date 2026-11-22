@@ -105,7 +105,6 @@
             Stop-Install "couldn't put the new hat in place ($installError). Your previous hat is still installed."
         }
         Write-Host "Installed hat $version to $target."
-        # Only the names hat creates, never a backup someone made by hand.
         Get-ChildItem -Path $binDir -Filter 'hat.exe.moved-aside-by-hat-*' |
             Where-Object { $_.Name -match '^hat\.exe\.moved-aside-by-hat-\d+$' } |
             Remove-Item -Force -ErrorAction SilentlyContinue

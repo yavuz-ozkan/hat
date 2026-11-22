@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-// Anything not listed stays per account, so a file a future Claude Code adds
-// (a new login file, say) is never shared by accident.
 var SharedAllowlist = []string{
 	"CLAUDE.md",
 	"settings.json",
@@ -24,8 +22,6 @@ var SharedAllowlist = []string{
 	"file-history",
 }
 
-// perAccount are items one account owns. Sharing any of them would make every
-// account run as one: the same sign-in, state, or browser logins.
 var perAccount = map[string]string{
 	".credentials.json": "its sign-in",
 	".claude.json":      "its state and connector sign-ins",
@@ -100,10 +96,10 @@ func (o OnlyHere) Error() string {
 		"Move %s to %s, then run hat again to share it.", o.Item, o.Path, o.Shared)
 }
 
-// Connect returns warnings (PrivateCopy, OnlyHere) for items it couldn't
-// share, and an error only when it couldn't finish.
-func Connect(accountDir, mainDir string, items []string) ([]error, error) {
-	var copies []error
+type Warnings []error
+
+func Connect(accountDir, mainDir string, items []string) (Warnings, error) {
+	var warnings Warnings
 	for _, item := range items {
 		target := filepath.Join(mainDir, item)
 		link := filepath.Join(accountDir, item)
@@ -111,30 +107,30 @@ func Connect(accountDir, mainDir string, items []string) ([]error, error) {
 		if os.IsNotExist(err) {
 			if isLink, _ := isLink(link); !isLink {
 				if _, err := os.Lstat(link); err == nil {
-					copies = append(copies, OnlyHere{Item: item, Path: link, Shared: target})
+					warnings = append(warnings, OnlyHere{Item: item, Path: link, Shared: target})
 				}
 			}
 			continue
 		}
 		if err != nil {
-			return copies, err
+			return warnings, err
 		}
 		linked, exists, err := pointsTo(link, target)
 		if err != nil {
-			return copies, err
+			return warnings, err
 		}
 		if linked {
 			continue
 		}
 		if exists {
-			copies = append(copies, PrivateCopy{Item: item, Copy: link, Shared: target})
+			warnings = append(warnings, PrivateCopy{Item: item, Copy: link, Shared: target})
 			continue
 		}
 		if err := makeLink(link, target, targetInfo.IsDir()); err != nil {
-			return copies, err
+			return warnings, err
 		}
 	}
-	return copies, nil
+	return warnings, nil
 }
 
 func IsLinkTo(path, target string) bool {

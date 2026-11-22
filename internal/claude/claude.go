@@ -41,8 +41,6 @@ func Env(set map[string]string, unset ...string) []string {
 //
 // It runs in the account's own folder: `mcp list` also health-checks the
 // current folder's project connectors, which renewal has no business starting.
-// A hung connector check can't stall it past renewTimeout; the account then
-// shows as expired.
 func (r Runner) RenewSignIn(env []string, accountDir string) {
 	ctx, cancel := context.WithTimeout(context.Background(), renewTimeout)
 	defer cancel()

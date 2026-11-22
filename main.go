@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 
@@ -44,25 +43,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "hat: couldn't find your home, settings, or cache folder: %v. Check that HOME (USERPROFILE on Windows) is set\n", err)
 		os.Exit(1)
 	}
-	// Only upgrade needs this path, so a path that can't be resolved stays
-	// empty and upgrade reports it; every other command works without it.
-	exe, err := os.Executable()
-	if err == nil {
-		exe, err = filepath.EvalSymlinks(exe)
-	}
-	if err != nil {
-		exe = ""
-	} else {
+	if exe, err := upgrade.InstalledPath(); err == nil {
 		upgrade.RemoveReplacedWindowsBinaries(exe)
 	}
 	app := cli.App{
-		Layout:   l,
-		In:       os.Stdin,
-		Out:      os.Stdout,
-		Err:      os.Stderr,
-		Version:  versionOf(version, moduleVersion()),
-		Releases: upgrade.PublicReleases(),
-		SelfPath: exe,
+		Layout:        l,
+		In:            os.Stdin,
+		Out:           os.Stdout,
+		Err:           os.Stderr,
+		Version:       versionOf(version, moduleVersion()),
+		Releases:      upgrade.PublicReleases(),
+		InstalledPath: upgrade.InstalledPath,
 	}
 	os.Exit(app.Run(os.Args[1:]))
 }

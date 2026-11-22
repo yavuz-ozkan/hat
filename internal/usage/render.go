@@ -41,8 +41,6 @@ func Render(w io.Writer, rows []Row, s Style, now time.Time) {
 	}
 }
 
-// LiveFooter goes under every --live table, so nobody mistakes the endpoint
-// it reads for a supported one.
 const LiveFooter = "Unofficial: --live calls an undocumented Anthropic endpoint that may change or stop working. Plain hat usage reads what Claude Code hands its status line."
 
 func ageText(asOf *time.Time, now time.Time, s Style) string {

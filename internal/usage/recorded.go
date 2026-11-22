@@ -37,9 +37,6 @@ func (s StatusLine) hasRateLimits() bool {
 	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
-// Record is what the status line last saw of one account's limits. The raw
-// rate_limits object is kept as Claude sent it, so a newer hat can read fields
-// an older one didn't know about.
 type Record struct {
 	RecordedAt time.Time       `json:"recordedAt"`
 	RateLimits json.RawMessage `json:"rateLimits"`
@@ -59,8 +56,6 @@ func Save(path string, line StatusLine, now time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	// Several sessions of one account can render at once; each writes its own
-	// temporary file and the last rename wins, so nobody reads half a file.
 	temp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".hat-*")
 	if err != nil {
 		return err
@@ -98,8 +93,6 @@ var namedWindows = []struct{ Key, Label, Model string }{
 	{"seven_day_oauth_apps", "Week", "OAuth apps"},
 }
 
-// LimitsFrom reads a rate_limits object. Keys it doesn't know are skipped, and
-// a window without a percentage is left out rather than shown as 0%.
 func LimitsFrom(rateLimits json.RawMessage) ([]Limit, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(rateLimits, &fields); err != nil {
@@ -151,7 +144,6 @@ func parseResetsAt(raw json.RawMessage) *time.Time {
 	return nil
 }
 
-// HowToRecord is the next step for an account with nothing recorded.
 const HowToRecord = `No usage recorded for this account yet. Set "statusLine" in Claude Code's settings.json to the command "hat statusline" (the README shows how), then send one message as this account.`
 
 // Recorded builds an account's row from what its status line last recorded
@@ -191,8 +183,6 @@ func nothingRecorded(acct account.Account) *Problem {
 	return &Problem{NoUsageRecorded, HowToRecord}
 }
 
-// DefaultLine is the status line hat prints when it wraps no other command,
-// like "Opus · 5h 23% · week 41%".
 func DefaultLine(line StatusLine) string {
 	var parts []string
 	if line.Model.DisplayName != "" {

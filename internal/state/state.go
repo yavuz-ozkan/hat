@@ -16,18 +16,10 @@ import (
 // written back exactly as Claude wrote them.
 type Document map[string]any
 
-// Claude Code guards its state file with proper-lockfile: holding the lock
-// means having created the folder "<file>.lock" (Claude Code 2.1.329).
-// hat takes the same lock so its writes never interleave with Claude's
-// or another hat. It never removes a lock it didn't create, even an
-// abandoned one: between checking a lock's age and removing it, Claude could
-// replace it with a live one. Claude clears abandoned locks on its next save.
 const lockRetryEvery = 50 * time.Millisecond
 
 var lockWaitFor = 5 * time.Second
 
-// ErrBusy means another process held the state file's lock for longer than
-// hat waits.
 var ErrBusy = errors.New("Claude was saving this account's state, so its connector list wasn't updated this time. It updates on the next start")
 
 func Read(path string) (Document, error) {
@@ -47,8 +39,7 @@ func Read(path string) (Document, error) {
 	return doc, nil
 }
 
-// Write replaces the file in one step, so Claude never reads a half-written
-// one. The temporary file is unique, so two writers never share it.
+// Write replaces the file in one step, so Claude never reads a half-written one.
 func Write(path string, doc Document) error {
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
@@ -114,6 +105,12 @@ func InheritFromMain(mainStateFile, accountStateFile string) error {
 	})
 }
 
+// Claude Code guards its state file with proper-lockfile: holding the lock
+// means having created the folder "<file>.lock" (Claude Code 2.1.329).
+// hat takes the same lock so its writes never interleave with Claude's
+// or another hat. It never removes a lock it didn't create, even an
+// abandoned one: between checking a lock's age and removing it, Claude could
+// replace it with a live one. Claude clears abandoned locks on its next save.
 func withLock(path string, fn func() error) error {
 	lock := path + ".lock"
 	deadline := time.Now().Add(lockWaitFor)

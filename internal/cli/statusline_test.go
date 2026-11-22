@@ -56,7 +56,6 @@ func filesOutsideTheCache(t *testing.T, h harness) map[string]string {
 		if path == filepath.Join(h.layout.Home, "cache") {
 			return filepath.SkipDir
 		}
-		// Home itself changes when the cache folder first appears in it.
 		if path == h.layout.Home {
 			return nil
 		}
@@ -72,6 +71,11 @@ func filesOutsideTheCache(t *testing.T, h harness) map[string]string {
 		t.Fatal(err)
 	}
 	return files
+}
+
+func blockUsageFolder(t *testing.T, h harness) {
+	t.Helper()
+	mustWrite(t, h.layout.UsageDir, "in the way")
 }
 
 func TestStatuslineRecordsTheAccountsLimitsAndPrintsADefaultLine(t *testing.T) {
@@ -140,8 +144,7 @@ func TestStatuslineSaysSoWhenYourCommandWontStart(t *testing.T) {
 func TestStatuslineStillPrintsWhenItCantRecord(t *testing.T) {
 	h := newHarness(t)
 	t.Setenv("CLAUDE_CONFIG_DIR", "")
-	// A file where the cache folder goes makes every save fail.
-	mustWrite(t, h.layout.UsageDir, "in the way")
+	blockUsageFolder(t, h)
 
 	for _, input := range []string{statusLineInput, "not json", ""} {
 		h.out.Reset()

@@ -12,7 +12,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -47,8 +49,6 @@ func tarGzBytes(t *testing.T, name string, content []byte) []byte {
 	return buf.Bytes()
 }
 
-// archiveForThisPlatform is what a release publishes for the machine running
-// the tests.
 func archiveForThisPlatform(t *testing.T, program []byte) []byte {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -109,7 +109,7 @@ func TestReplaceSwapsTheProgramAndLeavesNoTempFiles(t *testing.T) {
 	exe := filepath.Join(dir, binaryName(runtime.GOOS))
 	_ = os.WriteFile(exe, []byte("old"), 0o755)
 
-	if err := replace(exe, []byte("new")); err != nil {
+	if err := (swapper{rename: os.Rename}).replace(exe, []byte("new")); err != nil {
 		t.Fatal(err)
 	}
 	RemoveReplacedWindowsBinaries(exe)
@@ -220,20 +220,20 @@ func TestRemoveReplacedWindowsBinariesDeletesOnlyWhatUpgradesCreate(t *testing.T
 	}
 }
 
-// failSecondRename makes the swap's second rename (new program into place)
-// fail, and optionally the restore after it.
-func failSecondRename(t *testing.T, failRestore bool) {
-	t.Helper()
+func failingRenames(failedCalls ...int) swapper {
 	calls := 0
-	rename = func(from, to string) error {
+	return swapper{rename: func(from, to string) error {
 		calls++
-		if calls == 2 || (calls == 3 && failRestore) {
+		if slices.Contains(failedCalls, calls) {
 			return fmt.Errorf("simulated failure renaming %s", filepath.Base(from))
 		}
 		return os.Rename(from, to)
-	}
-	t.Cleanup(func() { rename = os.Rename })
+	}}
 }
+
+func failInstallRename() swapper { return failingRenames(2) }
+
+func failInstallAndRestore() swapper { return failingRenames(2, 3) }
 
 func TestReplaceOnWindowsPutsTheOldProgramBackWhenTheSwapFails(t *testing.T) {
 	if runtime.GOOS != "windows" {
@@ -242,9 +242,8 @@ func TestReplaceOnWindowsPutsTheOldProgramBackWhenTheSwapFails(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "hat.exe")
 	_ = os.WriteFile(exe, []byte("old"), 0o755)
-	failSecondRename(t, false)
 
-	err := replace(exe, []byte("new"))
+	err := failInstallRename().replace(exe, []byte("new"))
 
 	if err == nil {
 		t.Fatal("swap failure wasn't reported")
@@ -264,9 +263,8 @@ func TestReplaceOnWindowsSaysWhereTheOldProgramIsWhenItCantBePutBack(t *testing.
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "hat.exe")
 	_ = os.WriteFile(exe, []byte("old"), 0o755)
-	failSecondRename(t, true)
 
-	err := replace(exe, []byte("new"))
+	err := failInstallAndRestore().replace(exe, []byte("new"))
 
 	notRestored, ok := err.(*NotRestoredError)
 	if !ok {
@@ -293,7 +291,7 @@ func TestReplaceOnWindowsWorksWhileAnEarlierCopyIsStillAside(t *testing.T) {
 	}
 	defer stillRunning.Close()
 
-	if err := replace(exe, []byte("v3")); err != nil {
+	if err := (swapper{rename: os.Rename}).replace(exe, []byte("v3")); err != nil {
 		t.Fatalf("a copy still in use blocked the upgrade: %v", err)
 	}
 	if got, _ := os.ReadFile(exe); string(got) != "v3" {
@@ -363,17 +361,17 @@ func sign(n int) int {
 	return 0
 }
 
-// The archive name is written in four places: the GoReleaser template, Go,
-// and each installer. A mismatch only shows up when someone installs.
-func TestEveryPlaceAgreesOnTheArchiveName(t *testing.T) {
-	read := func(path string) string {
-		data, err := os.ReadFile(filepath.Join("..", "..", path))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
+func repoFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", path))
+	if err != nil {
+		t.Fatal(err)
 	}
-	goreleaser := read(".goreleaser.yaml")
+	return string(data)
+}
+
+func TestEveryPlaceAgreesOnTheArchiveName(t *testing.T) {
+	goreleaser := repoFile(t, ".goreleaser.yaml")
 	template := `name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"`
 	if !strings.Contains(goreleaser, template) || !strings.Contains(goreleaser, "project_name: hat") {
 		t.Errorf(".goreleaser.yaml no longer names archives %s", template)
@@ -384,11 +382,29 @@ func TestEveryPlaceAgreesOnTheArchiveName(t *testing.T) {
 	if want := "hat_1.2.3_windows_arm64.zip"; assetName("1.2.3", "windows", "arm64") != want {
 		t.Errorf("assetName for windows = %s, want %s", assetName("1.2.3", "windows", "arm64"), want)
 	}
-	if !strings.Contains(read("install.sh"), `asset="hat_${version}_linux_${arch}.tar.gz"`) {
+	if !strings.Contains(repoFile(t, "install.sh"), `asset="hat_${version}_linux_${arch}.tar.gz"`) {
 		t.Error("install.sh builds a different archive name")
 	}
-	if !strings.Contains(read("install.ps1"), `$asset = "hat_${version}_windows_$arch.zip"`) {
+	if !strings.Contains(repoFile(t, "install.ps1"), `$asset = "hat_${version}_windows_$arch.zip"`) {
 		t.Error("install.ps1 builds a different archive name")
+	}
+}
+
+func TestInstallPs1AndUpgradeAgreeOnTheMovedAsideName(t *testing.T) {
+	installer := repoFile(t, "install.ps1")
+	builds := `$movedAside = "$target` + movedAsideMarker + `" + [DateTime]::UtcNow.Ticks`
+	filter := `-Filter 'hat.exe` + movedAsideMarker + `*'`
+	pattern := `^` + regexp.QuoteMeta("hat.exe"+movedAsideMarker) + `\d+$`
+	for _, want := range []string{builds, filter, `-match '` + pattern + `'`} {
+		if !strings.Contains(installer, want) {
+			t.Errorf("install.ps1 no longer contains %s", want)
+		}
+	}
+	if upgradeName := filepath.Base(movedAsidePath("hat.exe")); !regexp.MustCompile(pattern).MatchString(upgradeName) {
+		t.Errorf("install.ps1 wouldn't clean up %s, which upgrade creates", upgradeName)
+	}
+	if installerName := "hat.exe" + movedAsideMarker + "638675712000000000"; !isMovedAside("hat.exe", installerName) {
+		t.Errorf("upgrade wouldn't clean up %s, which install.ps1 creates", installerName)
 	}
 }
 

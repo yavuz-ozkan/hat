@@ -13,7 +13,7 @@ import (
 
 const Repo = "yavuz-ozkan/hat"
 
-// Source is where releases come from. Tests swap in a fake.
+// Source is where releases come from.
 type Source interface {
 	LatestTag() (string, error)
 	// Fetch returns all of file name from release tag, or an error wrapping
@@ -23,10 +23,7 @@ type Source interface {
 
 var ErrNotPublished = errors.New("not published in this release")
 
-// GitHubReleases reads public releases over plain HTTPS, with no sign-in.
 type GitHubReleases struct {
-	// ReleasesURL is the repository's releases page, like
-	// https://github.com/yavuz-ozkan/hat/releases.
 	ReleasesURL string
 	// Client must follow redirects: GitHub answers every download with one
 	// to its file storage.
