@@ -31,6 +31,9 @@ archives:
           - zip
 
 release:
+  # Published as a draft. The Release workflow attests the archives, then makes
+  # the release public, so nothing is downloadable without its provenance.
+  draft: true
   # A tag like v1.2.0-rc.1 becomes a GitHub pre-release, which the latest
   # release lookup in upgrade and both installers skips.
   prerelease: auto

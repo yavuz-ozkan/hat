@@ -34,3 +34,7 @@ jobs:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
+      - name: Make the release public
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

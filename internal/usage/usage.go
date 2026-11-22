@@ -43,7 +43,7 @@ type Row struct {
 	Limits  []Limit `json:"limits"`
 	// AsOf is when the limits were read: when the status line last recorded
 	// them, or when --live asked Anthropic.
-	AsOf    *time.Time `json:"asOf,omitempty"`
+	AsOf    *time.Time `json:"asOf"`
 	Problem *Problem   `json:"problem,omitempty"`
 }
 

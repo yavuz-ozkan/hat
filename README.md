@@ -159,3 +159,8 @@ gh attestation verify hat_0.2.0_linux_amd64.tar.gz --repo yavuz-ozkan/hat
 ```
 
 To build from source, run `go build -o hat .` with Go 1.26 or newer. [REVIEW.md](REVIEW.md) lists what a change must not break.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+

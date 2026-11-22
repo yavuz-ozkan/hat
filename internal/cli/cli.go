@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/yavuz-ozkan/hat/internal/account"
 	"github.com/yavuz-ozkan/hat/internal/claude"
@@ -201,6 +202,13 @@ func (a App) prepare(acct account.Account) error {
 	}
 	if err := os.MkdirAll(acct.ConfigDir, accountDirMode); err != nil {
 		return err
+	}
+	// MkdirAll leaves an existing folder's mode alone, and folders made by
+	// earlier versions are 0755. Windows ignores these mode bits.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(acct.ConfigDir, accountDirMode); err != nil {
+			return err
+		}
 	}
 	if err := account.MarkManaged(acct.ConfigDir); err != nil {
 		return err
