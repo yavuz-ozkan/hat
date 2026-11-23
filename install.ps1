@@ -12,11 +12,110 @@
     $ProgressPreference = 'SilentlyContinue'
 
     $repo = 'yavuz-ozkan/hat'
-    $releases = "https://github.com/$repo/releases"
+    $releases = if ($env:HAT_RELEASES_URL) { $env:HAT_RELEASES_URL.TrimEnd('/') } else { "https://github.com/$repo/releases" }
     $binDir = if ($env:HAT_BIN_DIR) { $env:HAT_BIN_DIR } else { Join-Path $HOME '.local\bin' }
 
     function Stop-Install([string]$Message) {
         throw "hat install: $Message"
+    }
+
+    # Refuses a releases URL a network could alter on the way: anything but
+    # https://, except plain http:// to this machine, which a test server
+    # needs. hat upgrade applies the same rule (upgrade.checkReleasesURL).
+    function Assert-ReleasesUrl {
+        if ($releases.StartsWith('https://', [StringComparison]::Ordinal)) { return }
+        if ($releases.StartsWith('http://', [StringComparison]::Ordinal)) {
+            $authority = $releases.Substring(7).Split('/')[0]
+            foreach ($hostName in @('127.0.0.1', 'localhost', '[::1]')) {
+                if (-not $authority.Contains('@') -and ($authority -ceq $hostName -or $authority.StartsWith("${hostName}:", [StringComparison]::Ordinal))) { return }
+            }
+        }
+        $example = 'https://' + ($releases -replace '^.*?://', '')
+        Stop-Install "HAT_RELEASES_URL is '$releases', but it must start with https://, so nothing on the network can change what this installer downloads; plain http:// works only for this machine (127.0.0.1, ::1, or localhost). For example: `$env:HAT_RELEASES_URL = '$example'"
+    }
+
+    # Each gh run may take 2 minutes, as in hat upgrade (upgrade.ghDeadline).
+    # HAT_TEST_GH_DEADLINE_SECONDS lets the tests watch a hung gh give up
+    # sooner; it can only shorten the wait, to 1 to 119 seconds written as
+    # digits.
+    $ghLimit = 120
+    if ("$env:HAT_TEST_GH_DEADLINE_SECONDS" -match '\A[0-9]{1,3}\z') {
+        $shortened = [int]$env:HAT_TEST_GH_DEADLINE_SECONDS
+        if ($shortened -ge 1 -and $shortened -lt 120) { $ghLimit = $shortened }
+    }
+    $ghLimitText = if ($ghLimit -eq 120) { '2 minutes' } else { "$ghLimit seconds" }
+
+    # Quotes one argument the way Windows programs split their command line.
+    # Start-Process joins its arguments with spaces and quotes nothing.
+    function ConvertTo-WindowsArgument([string]$Value) {
+        if ($Value -and $Value -notmatch '[\s"]') { return $Value }
+        '"' + ($Value -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
+    }
+
+    # Runs gh with a time limit and returns its exit code and output. Anything
+    # short of gh starting, finishing in time, and reporting an exit code ends
+    # the install. The output goes through files in the archive's folder,
+    # because reading two redirected pipes while waiting can deadlock.
+    function Invoke-GH([string]$Gh, [string]$Archive, [string[]]$Arguments) {
+        $name = Split-Path -Leaf $Archive
+        $outFile = Join-Path (Split-Path -Parent $Archive) ('gh-' + [guid]::NewGuid() + '.out')
+        $errFile = "$outFile.err"
+        try {
+            $process = Start-Process -FilePath $Gh -ArgumentList (($Arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ') `
+                -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        }
+        catch {
+            # The outer message carries this script's line and column; the
+            # innermost one is Windows saying why gh didn't start.
+            $cause = $_.Exception
+            while ($cause.InnerException) { $cause = $cause.InnerException }
+            Stop-Install "couldn't start gh to check $name's build provenance ($($cause.Message)), so nothing was installed. Check that gh --version runs, then run this again."
+        }
+        # Windows PowerShell 5.1 reports no exit code unless the process
+        # handle was opened while the process ran.
+        $null = $process.Handle
+        if (-not $process.WaitForExit($ghLimit * 1000)) {
+            # Kill throws when gh exits between the wait and the kill.
+            try { $process.Kill() } catch [InvalidOperationException] { }
+            Stop-Install "gh took longer than $ghLimitText to check $name's build provenance, so nothing was installed. Check your connection, then run this again."
+        }
+        $process.WaitForExit()
+        $code = $process.ExitCode
+        $output = @(Get-Content -Path $outFile, $errFile -ErrorAction SilentlyContinue)
+        Remove-Item -Force $outFile, $errFile -ErrorAction SilentlyContinue
+        if ($null -eq $code) {
+            Stop-Install "couldn't start gh to check $name's build provenance (Windows reported no exit code for it), so nothing was installed. Check that gh --version runs, then run this again."
+        }
+        [pscustomobject]@{ Code = $code; Output = (($output -join ' ') -replace '\s+', ' ').Trim() }
+    }
+
+    # Returns the line to show after installing, or throws when gh can't
+    # verify that the archive came from $Tag. hat upgrade decides the same way
+    # (upgrade.CheckProvenance) and prints the same lines. Only gh.exe counts:
+    # a gh.cmd would run through cmd.exe, which acts on characters in the
+    # archive's path. --hostname github.com keeps a GH_HOST pointing at GitHub
+    # Enterprise from sending the check there. gh before 2.49 has no
+    # attestation command.
+    function Test-Provenance([string]$Archive, [string]$Tag) {
+        if ($releases -cnotlike 'https://github.com/*') {
+            return "Build provenance not checked: HAT_RELEASES_URL isn't a github.com address, and only GitHub releases carry hat's attestations."
+        }
+        $gh = Get-Command gh.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $gh) {
+            return "Build provenance not checked: the GitHub CLI isn't installed. To check it next time, install gh from https://cli.github.com and run gh auth login."
+        }
+        # Only the exit code matters; gh masks the token it shows here.
+        $signedIn = (Invoke-GH $gh.Source $Archive @('auth', 'status', '--hostname', 'github.com')).Code -eq 0
+        if (-not $signedIn) {
+            return "Build provenance not checked: gh isn't signed in to github.com. To check it next time, run gh auth login --hostname github.com."
+        }
+        $verify = Invoke-GH $gh.Source $Archive @('attestation', 'verify', $Archive, '--hostname', 'github.com', '--repo', $repo,
+            '--signer-workflow', 'yavuz-ozkan/hat/.github/workflows/release.yml', '--source-ref', "refs/tags/$Tag")
+        if ($verify.Code -eq 0) { return "gh verified its build provenance: it was built by yavuz-ozkan/hat/.github/workflows/release.yml." }
+        if ($verify.Output -like '*unknown command "attestation"*') {
+            return "Build provenance not checked: this gh is too old to verify attestations. To check it next time, upgrade gh from https://cli.github.com."
+        }
+        Stop-Install "$(Split-Path -Leaf $Archive) matches its checksum, but gh couldn't verify it was built by yavuz-ozkan/hat/.github/workflows/release.yml from tag $Tag, so nothing was installed. gh said: $($verify.Output). Run this again; if gh's sign-in is the problem, run gh auth login --hostname github.com first. If it keeps failing, report it at https://github.com/$repo/security."
     }
 
     $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
@@ -24,6 +123,7 @@
         'ARM64' { 'arm64' }
         default { Stop-Install "there's no hat build for a $($env:PROCESSOR_ARCHITECTURE) processor." }
     }
+    Assert-ReleasesUrl
 
     if ($env:HAT_VERSION) {
         $tag = 'v' + $env:HAT_VERSION.Trim().TrimStart('v')
@@ -82,6 +182,7 @@
         if ($expected -ne $actual) {
             Stop-Install "$asset doesn't match its published checksum, so nothing was installed. Run this again; if it keeps failing, the release is damaged."
         }
+        $provenance = Test-Provenance (Join-Path $tmp $asset) $tag
 
         Expand-Archive -Path (Join-Path $tmp $asset) -DestinationPath (Join-Path $tmp 'unpacked')
         New-Item -ItemType Directory -Force -Path $binDir | Out-Null
@@ -115,6 +216,7 @@
             Stop-Install "couldn't put the new hat in place ($installError). Your previous hat is still installed."
         }
         Write-Host "Installed hat $version to $target."
+        Write-Host $provenance
         Get-ChildItem -Path $binDir -Filter 'hat.exe.moved-aside-by-hat-*' |
             Where-Object { $_.Name -match '^hat\.exe\.moved-aside-by-hat-\d+$' } |
             Remove-Item -Force -ErrorAction SilentlyContinue

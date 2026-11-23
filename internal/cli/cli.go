@@ -101,6 +101,7 @@ func (a App) upgrade(args []string) int {
 		say(a.Out, "hat %s is newer than the newest release (%s), so nothing changed.", result.From, result.To)
 	default:
 		say(a.Out, "Upgraded hat from %s to %s.", result.From, result.To)
+		say(a.Out, "%s", result.Provenance.Note())
 	}
 	return exitOK
 }

@@ -125,12 +125,20 @@ func TestReplaceSwapsTheProgramAndLeavesNoTempFiles(t *testing.T) {
 }
 
 type fakeReleases struct {
-	tag     string
-	files   map[string][]byte
-	fetches int
+	tag           string
+	files         map[string][]byte
+	fetches       int
+	provenance    Provenance
+	provenanceErr error
+	checked       []string
 }
 
 func (f *fakeReleases) LatestTag() (string, error) { return f.tag, nil }
+
+func (f *fakeReleases) CheckProvenance(tag, asset string, _ []byte) (Provenance, error) {
+	f.checked = append(f.checked, tag+" "+asset)
+	return f.provenance, f.provenanceErr
+}
 
 func (f *fakeReleases) Fetch(_ string, name string) ([]byte, error) {
 	f.fetches++

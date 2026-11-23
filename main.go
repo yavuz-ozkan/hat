@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"runtime"
@@ -60,7 +61,7 @@ func main() {
 		Out:           os.Stdout,
 		Err:           os.Stderr,
 		Version:       versionOf(version, moduleVersion()),
-		Releases:      upgrade.PublicReleases(),
+		Releases:      upgrade.ReleasesAt(cmp.Or(os.Getenv("HAT_RELEASES_URL"), upgrade.DefaultReleasesURL)),
 		InstalledPath: upgrade.InstalledPath,
 	}
 	os.Exit(app.Run(os.Args[1:]))

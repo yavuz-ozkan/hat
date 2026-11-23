@@ -42,8 +42,9 @@ const (
 )
 
 type Result struct {
-	From, To string
-	Outcome  Outcome
+	From, To   string
+	Outcome    Outcome
+	Provenance Provenance
 }
 
 // Run installs the newest release over exePath when it's newer than the
@@ -86,6 +87,10 @@ func Run(src Source, current, exePath string) (Result, error) {
 	if err := verify(asset, archive, checksums); err != nil {
 		return Result{}, err
 	}
+	provenance, err := src.CheckProvenance(tag, asset, archive)
+	if err != nil {
+		return Result{}, err
+	}
 	binary, err := extractBinary(asset, archive, binaryName(runtime.GOOS))
 	if err != nil {
 		return Result{}, err
@@ -93,7 +98,7 @@ func Run(src Source, current, exePath string) (Result, error) {
 	if err := (swapper{rename: os.Rename}).replace(exePath, binary); err != nil {
 		return Result{}, err
 	}
-	return Result{From: current, To: latest, Outcome: Installed}, nil
+	return Result{From: current, To: latest, Outcome: Installed, Provenance: provenance}, nil
 }
 
 func compareVersions(current, latest string) (int, error) {
