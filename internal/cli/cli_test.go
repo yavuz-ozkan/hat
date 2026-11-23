@@ -238,3 +238,28 @@ func TestRemoveRefusesAnAccountFolderThatIsALink(t *testing.T) {
 		t.Errorf("deleted through the link: %q %v", got, err)
 	}
 }
+
+func TestMacOSRunsHelpVersionAndAStatusLineThatRecordsNothing(t *testing.T) {
+	cases := map[Handling][][]string{
+		RunNormally:       {{}, {"help"}, {"-h"}, {"--help"}, {"version"}, {"--version"}},
+		StatusLineOnly:    {{"statusline"}, {"statusline", "sh", "~/.claude/statusline.sh"}},
+		RefuseUnsupported: {{"work"}, {"usage"}, {"usage", "--live"}, {"rm", "work"}, {"upgrade"}, {"work", "--help"}},
+	}
+	for want, commandLines := range cases {
+		for _, args := range commandLines {
+			if got := HandlingFor("darwin", args); got != want {
+				t.Errorf("darwin %v: HandlingFor = %d, want %d", args, got, want)
+			}
+		}
+	}
+	for _, goos := range []string{"windows", "linux"} {
+		for _, args := range [][]string{{"work"}, {"statusline"}, {"usage"}} {
+			if got := HandlingFor(goos, args); got != RunNormally {
+				t.Errorf("%s %v: HandlingFor = %d, want it to run normally", goos, args, got)
+			}
+		}
+	}
+	if !strings.Contains(MacOSUnsupported, "doesn't support macOS") || !strings.Contains(MacOSUnsupported, "Keychain") {
+		t.Errorf("MacOSUnsupported = %q", MacOSUnsupported)
+	}
+}

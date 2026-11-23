@@ -15,6 +15,7 @@ import (
 	"github.com/yavuz-ozkan/hat/internal/memory"
 	"github.com/yavuz-ozkan/hat/internal/share"
 	"github.com/yavuz-ozkan/hat/internal/state"
+	"github.com/yavuz-ozkan/hat/internal/terminal"
 	"github.com/yavuz-ozkan/hat/internal/upgrade"
 )
 
@@ -95,11 +96,11 @@ func (a App) upgrade(args []string) int {
 	}
 	switch result.Outcome {
 	case upgrade.AlreadyNewest:
-		fmt.Fprintf(a.Out, "hat %s is the newest release.\n", result.To)
+		say(a.Out, "hat %s is the newest release.", result.To)
 	case upgrade.AheadOfNewest:
-		fmt.Fprintf(a.Out, "hat %s is newer than the newest release (%s), so nothing changed.\n", result.From, result.To)
+		say(a.Out, "hat %s is newer than the newest release (%s), so nothing changed.", result.From, result.To)
 	default:
-		fmt.Fprintf(a.Out, "Upgraded hat from %s to %s.\n", result.From, result.To)
+		say(a.Out, "Upgraded hat from %s to %s.", result.From, result.To)
 	}
 	return exitOK
 }
@@ -115,8 +116,45 @@ func (a App) Run(args []string) int {
 	return a.launch(args[0], args[1:])
 }
 
+const MacOSUnsupported = "hat doesn't support macOS yet. Claude Code keeps macOS sign-ins in the Keychain, not in each account's folder, so every account would ask you to sign in again at every start. Run Claude Code with plain claude on this Mac"
+
+// Handling is how hat treats a command line on the operating system it runs
+// on.
+type Handling int
+
+const (
+	RunNormally Handling = iota
+	// StatusLineOnly prints the status line and records nothing. A status
+	// line must always print, even where hat can't record usage.
+	StatusLineOnly
+	RefuseUnsupported
+)
+
+// HandlingFor is how hat treats args on the operating system goos names. On
+// macOS, help and version still run, so someone can see what hat is and
+// which build they have.
+func HandlingFor(goos string, args []string) Handling {
+	if goos != "darwin" || len(args) == 0 {
+		return RunNormally
+	}
+	switch args[0] {
+	case "help", "-h", "--help", "version", "--version":
+		return RunNormally
+	case "statusline":
+		return StatusLineOnly
+	}
+	return RefuseUnsupported
+}
+
+// say prints one line, without anything a terminal would act on: account
+// names come from folder names, and errors, paths, and release tags from
+// outside hat.
+func say(w io.Writer, format string, args ...any) {
+	fmt.Fprintln(w, terminal.Printable(fmt.Sprintf(format, args...)))
+}
+
 func (a App) fail(code int, format string, args ...any) int {
-	fmt.Fprintf(a.Err, "hat: "+format+"\n", args...)
+	say(a.Err, "hat: "+format, args...)
 	return code
 }
 
@@ -174,7 +212,7 @@ func (a App) launch(name string, claudeArgs []string) int {
 	set["AGENT_BROWSER_PROFILE"] = filepath.Join(acct.ConfigDir, "browser-profile")
 	env := claude.Env(set, unset...)
 	if _, err := os.Stat(acct.CredentialsFile); os.IsNotExist(err) {
-		fmt.Fprintf(a.Out, "First run for '%s'. A browser window will open: sign in with the %s account.\n", name, name)
+		say(a.Out, "First run for '%s'. A browser window will open: sign in with the %s account.", name, name)
 		if err := runner.SignIn(env); err != nil {
 			return a.fail(exitFailed, "Sign-in didn't finish (%v). Run hat %s again to retry.", err, name)
 		}
@@ -199,7 +237,7 @@ var ambientCredentials = []string{"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"
 func (a App) warnAboutAmbientCredentials(name string) {
 	for _, variable := range ambientCredentials {
 		if os.Getenv(variable) != "" {
-			fmt.Fprintf(a.Err, "hat: warning: %s is set, so Claude Code uses it instead of %s's own sign-in. To use %s's sign-in, %s.\n", variable, name, name, unsetForOneRun(variable, name))
+			say(a.Err, "hat: warning: %s is set, so Claude Code uses it instead of %s's own sign-in. To use %s's sign-in, %s.", variable, name, name, unsetForOneRun(variable, name))
 		}
 	}
 }
@@ -213,7 +251,7 @@ func unsetForOneRun(variable, name string) string {
 
 func (a App) warnWhenMainHasNoSharedFolders(name string) {
 	if _, err := os.Stat(filepath.Join(a.Layout.MainDir, "projects")); errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintf(a.Err, "hat: warning: run plain claude once first, so the shared folders exist in %s. Otherwise %s keeps its own copies instead of sharing main's.\n", a.Layout.MainDir, name)
+		say(a.Err, "hat: warning: run plain claude once first, so the shared folders exist in %s. Otherwise %s keeps its own copies instead of sharing main's.", a.Layout.MainDir, name)
 	}
 }
 
@@ -243,14 +281,14 @@ func (a App) prepare(acct account.Account) error {
 	}
 	warnings, err := share.Connect(acct.ConfigDir, a.Layout.MainDir, items)
 	for _, warning := range warnings {
-		fmt.Fprintf(a.Err, "hat: warning: %v\n", warning)
+		say(a.Err, "hat: warning: %v", warning)
 	}
 	if err != nil {
 		return err
 	}
 	err = state.InheritFromMain(a.Layout.MainStateFile, acct.StateFile)
 	if errors.Is(err, state.ErrBusy) {
-		fmt.Fprintf(a.Err, "hat: warning: %v\n", err)
+		say(a.Err, "hat: warning: %v", err)
 		return nil
 	}
 	return err
@@ -282,7 +320,7 @@ func (a App) remove(args []string) int {
 	if err := account.Remove(acct); err != nil {
 		return a.fail(exitFailed, "couldn't delete all of %s: %v. Shared files are untouched. Close any Claude window running as %s and run hat rm %s again.", acct.ConfigDir, err, name, name)
 	}
-	fmt.Fprintf(a.Out, "Removed %s: its sign-in, connector sign-ins, saved browser logins, and recorded usage.\n", name)
-	fmt.Fprintf(a.Out, "Shared memory, settings, and skills are untouched in %s.\n", a.Layout.MainDir)
+	say(a.Out, "Removed %s: its sign-in, connector sign-ins, saved browser logins, and recorded usage.", name)
+	say(a.Out, "Shared memory, settings, and skills are untouched in %s.", a.Layout.MainDir)
 	return exitOK
 }

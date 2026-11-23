@@ -55,7 +55,7 @@ func passStatusLineTo(out, errOut io.Writer, command []string, input []byte) int
 	default:
 		// Claude Code shows a status line command's output only when it exits
 		// 0, and the status line is where the person will see the problem.
-		fmt.Fprintln(out, cantStartMessage(command[0], err))
+		say(out, "%s", cantStartMessage(command[0], err))
 		return exitOK
 	}
 }

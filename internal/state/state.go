@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -30,11 +31,34 @@ func Read(path string) (Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decode(path, data)
+}
+
+func decode(path string, data []byte) (Document, error) {
+	doc, err := parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s isn't valid JSON (%v). hat didn't change it. Fix or restore the file, then run hat again", path, err)
+	}
+	return doc, nil
+}
+
+var errTrailingData = errors.New("there is more after the first JSON value")
+
+func parse(data []byte) (Document, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return Document{}, nil
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
-	doc := Document{}
+	var doc Document
 	if err := decoder.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("%s isn't valid JSON (%v). hat didn't change it. Fix or restore the file, then run hat again", path, err)
+		return nil, err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errTrailingData
+	}
+	if doc == nil {
+		doc = Document{}
 	}
 	return doc, nil
 }
@@ -80,9 +104,18 @@ func InheritFromMain(mainStateFile, accountStateFile string) error {
 		return err
 	}
 	return withLock(accountStateFile, func() error {
-		_, statErr := os.Stat(accountStateFile)
-		isNew := errors.Is(statErr, fs.ErrNotExist)
-		account, err := Read(accountStateFile)
+		data, err := os.ReadFile(accountStateFile)
+		isNew := errors.Is(err, fs.ErrNotExist)
+		switch {
+		case isNew:
+		case err != nil:
+			return err
+		case len(bytes.TrimSpace(data)) == 0:
+			// Claude Code 2.1.330 deals with an empty state file itself,
+			// offering to restore it from its backups. Writing it would hide that.
+			return nil
+		}
+		account, err := decode(accountStateFile, data)
 		if err != nil {
 			return err
 		}

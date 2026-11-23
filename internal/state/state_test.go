@@ -102,6 +102,84 @@ func TestReadNamesTheBrokenFile(t *testing.T) {
 	}
 }
 
+func TestReadTakesAnEmptyOrNullFileForAnEmptyDocument(t *testing.T) {
+	for _, content := range []string{"", " \r\n\t", "null", " null\n"} {
+		doc, err := Read(writeFile(t, t.TempDir(), "state.json", content))
+		if err != nil || doc == nil || len(doc) != 0 {
+			t.Errorf("Read(%q) = %v, %v, want an empty document", content, doc, err)
+		}
+	}
+}
+
+// Claude Code offers to restore an empty state file from its backups, so hat
+// leaves it for Claude.
+func TestInheritFromMainLeavesAnEmptyAccountStateFileAlone(t *testing.T) {
+	for _, content := range []string{"", " \r\n\t"} {
+		dir := t.TempDir()
+		mainPath := writeFile(t, dir, "main.json", mainState)
+		accountPath := writeFile(t, dir, "account.json", content)
+
+		if err := InheritFromMain(mainPath, accountPath); err != nil {
+			t.Fatalf("%q: %v", content, err)
+		}
+
+		if after, _ := os.ReadFile(accountPath); string(after) != content {
+			t.Errorf("%q: the file now reads %q", content, after)
+		}
+	}
+}
+
+func TestInheritFromMainReadsAnEmptyMainStateFileAsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := writeFile(t, dir, "main.json", "")
+	accountPath := writeFile(t, dir, "account.json", accountState)
+
+	if err := InheritFromMain(mainPath, accountPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInheritFromMainFillsAnAccountStateFileHoldingNull(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := writeFile(t, dir, "main.json", mainState)
+	accountPath := writeFile(t, dir, "account.json", "null")
+
+	if err := InheritFromMain(mainPath, accountPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if servers, _ := readJSON(t, accountPath)["mcpServers"].(map[string]any); len(servers) != 2 {
+		t.Errorf("connectors = %v, want main's two", servers)
+	}
+}
+
+func TestInheritFromMainReadsAMainStateFileHoldingNull(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := writeFile(t, dir, "main.json", "null")
+	accountPath := writeFile(t, dir, "account.json", accountState)
+
+	if err := InheritFromMain(mainPath, accountPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadRefusesDataAfterTheFirstValue(t *testing.T) {
+	for _, content := range []string{"{} trailing garbage", "{}{}", `{"a": 1} 2`, "null {}"} {
+		dir := t.TempDir()
+		mainPath := writeFile(t, dir, "main.json", mainState)
+		accountPath := writeFile(t, dir, "account.json", content)
+
+		err := InheritFromMain(mainPath, accountPath)
+
+		if err == nil || !strings.Contains(err.Error(), accountPath) || !strings.Contains(err.Error(), "didn't change it") {
+			t.Errorf("%q: err = %v, want the broken-file message", content, err)
+		}
+		if after, _ := os.ReadFile(accountPath); string(after) != content {
+			t.Errorf("%q: the file now reads %q", content, after)
+		}
+	}
+}
+
 const mainState = `{
   "oauthAccount": {"emailAddress": "main@example.com"},
   "mcpServers": {

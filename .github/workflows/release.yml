@@ -5,30 +5,54 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
-  release:
+  test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go matches the go.mod toolchain line
+        run: sh .github/scripts/check-go-toolchain.sh
+      - run: go test -count=1 ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           cache: false
-      - run: go test -count=1 ./...
-      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: v2.20.3
-          args: release --clean
+      - name: Go matches the go.mod toolchain line
+        run: sh .github/scripts/check-go-toolchain.sh
+      - name: Install GoReleaser
+        run: sh .github/scripts/install-goreleaser.sh "$RUNNER_TEMP/goreleaser"
+      - name: Release
+        run: '"$RUNNER_TEMP/goreleaser/goreleaser" release --clean'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # With two tags on one commit (a pre-release and its release),
+          # GoReleaser picks the pre-release; build the tag that was pushed.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |

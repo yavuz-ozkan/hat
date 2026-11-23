@@ -48,15 +48,21 @@ func (g GitHubReleases) LatestTag() (string, error) {
 		return "", fmt.Errorf("couldn't reach GitHub to look up the newest release (%v). Check your connection, then run hat upgrade again", err)
 	}
 	defer resp.Body.Close()
+	noRelease := fmt.Errorf("GitHub lists no published release at %s yet, so there's nothing to upgrade to", g.ReleasesURL)
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return "", fmt.Errorf("GitHub lists no published release at %s yet, so there's nothing to upgrade to", g.ReleasesURL)
+		return "", noRelease
 	case resp.StatusCode/100 != 3:
 		return "", fmt.Errorf("GitHub answered HTTP %d when hat looked up the newest release. Run hat upgrade again later", resp.StatusCode)
 	}
 	if location, err := resp.Location(); err == nil {
 		if tag, ok := tagOfReleasePage(location.Path); ok {
 			return tag, nil
+		}
+		// With only pre-releases published, GitHub redirects /releases/latest
+		// to the releases list instead of answering 404.
+		if strings.TrimSuffix(location.String(), "/") == strings.TrimSuffix(g.ReleasesURL, "/") {
+			return "", noRelease
 		}
 	}
 	return "", fmt.Errorf("GitHub sent the newest-release lookup to %q, which isn't a release page, so the repository may have moved. Find where hat lives now and reinstall from there", resp.Header.Get("Location"))

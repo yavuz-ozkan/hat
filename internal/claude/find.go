@@ -27,7 +27,10 @@ func Find(executable string) (string, error) {
 	return path, nil
 }
 
+// isBatchFile looks at the extension Windows acts on, which drops trailing
+// dots and spaces: claude.cmd. and "claude.cmd " both run claude.cmd. A
+// PATHEXT entry like ".CMD " makes Go's PATH lookup find such a name.
 func isBatchFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
+	ext := strings.ToLower(filepath.Ext(strings.TrimRight(path, ". ")))
 	return ext == ".cmd" || ext == ".bat"
 }

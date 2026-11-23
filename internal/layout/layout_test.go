@@ -37,6 +37,25 @@ func TestUsageFileIsNotListedForFoldersHatUsageNeverShows(t *testing.T) {
 	}
 }
 
+// Windows opens .claude-work. and ".claude-work " as .claude-work, and
+// .claude-work:x as a stream of it. None of them may pick a record file of
+// its own, like claude-work..json.
+func TestUsageFileIsNotListedForNamesWindowsWouldRead(t *testing.T) {
+	l := testLayout(t)
+	for _, name := range namesWindowsWouldRead {
+		configDir := filepath.Join(l.Home, name)
+		got, listed := l.UsageFile(configDir)
+		switch {
+		case runtime.GOOS == "windows" && listed:
+			t.Errorf("UsageFile(%q) = %s, want it not listed", configDir, got)
+		case runtime.GOOS != "windows" && got != filepath.Join(l.UsageDir, name[1:]+".json"):
+			t.Errorf("UsageFile(%q) = %s, %t, want the folder's own record file, since Linux keeps the name as is", configDir, got, listed)
+		}
+	}
+}
+
+var namesWindowsWouldRead = []string{".claude-work.", ".claude-work ", ".claude-work. .", ".claude-work:x", ".claude-work::$DATA", ".claude-a:b"}
+
 func TestUsageFileIgnoresCaseOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("only Windows paths are case-insensitive")

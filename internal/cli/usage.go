@@ -78,10 +78,10 @@ func (a App) liveRows(accounts []account.Account) []usage.Row {
 func (a App) renew(acct account.Account) {
 	runner, err := a.runner()
 	if err != nil {
-		fmt.Fprintf(a.Err, "hat: warning: couldn't renew %s's expired sign-in: %v\n", acct.Name, err)
+		say(a.Err, "hat: warning: couldn't renew %s's expired sign-in: %v", acct.Name, err)
 		return
 	}
-	fmt.Fprintf(a.Err, "Renewing %s's expired sign-in through Claude...\n", acct.Name)
+	say(a.Err, "Renewing %s's expired sign-in through Claude...", acct.Name)
 	set, unset := acct.Environment()
 	runner.RenewSignIn(claude.Env(set, unset...), acct.ConfigDir)
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/yavuz-ozkan/hat/internal/account"
 	"github.com/yavuz-ozkan/hat/internal/state"
+	"github.com/yavuz-ozkan/hat/internal/terminal"
 )
 
 // StatusLine is the part of the JSON Claude Code sends its status line that
@@ -161,8 +162,8 @@ func nothingRecorded(acct account.Account) *Problem {
 
 func DefaultLine(line StatusLine) string {
 	var parts []string
-	if line.Model.DisplayName != "" {
-		parts = append(parts, line.Model.DisplayName)
+	if model := terminal.Printable(line.Model.DisplayName); model != "" {
+		parts = append(parts, model)
 	}
 	if line.hasRateLimits() {
 		limits, _ := LimitsFrom(line.RateLimits)

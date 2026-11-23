@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/yavuz-ozkan/hat/internal/layout"
@@ -95,6 +96,46 @@ func TestValidateName(t *testing.T) {
 	for _, bad := range []string{"", "Work", "-x", "a b", "../x"} {
 		if ValidateName(bad) == nil {
 			t.Errorf("ValidateName(%q) accepted a bad name", bad)
+		}
+	}
+}
+
+// "hat usage" lists exactly the accounts whose usage hat statusline records,
+// so no row points at a record file that can't exist.
+func TestAllListsOnlyAccountsWhoseUsageIsRecorded(t *testing.T) {
+	l := homeWithAccounts(t)
+	odd := []string{"work.", "work "}
+	if runtime.GOOS != "windows" {
+		odd = append(odd, "a:b")
+	}
+	for _, name := range odd {
+		dir := filepath.Join(l.Home, layout.AccountDirPrefix+name)
+		if runtime.GOOS == "windows" {
+			dir = `\\?\` + dir
+		}
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dir+string(filepath.Separator)+".claude.json", []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	accounts, err := All(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listed := map[string]bool{}
+	for _, acct := range accounts {
+		listed[acct.Name] = true
+		if _, recorded := l.UsageFile(acct.ConfigDir); !recorded {
+			t.Errorf("All lists %q, whose usage is never recorded", acct.Name)
+		}
+	}
+	for _, name := range odd {
+		if want := runtime.GOOS != "windows"; listed[name] != want {
+			t.Errorf("%q listed = %t, want %t", name, listed[name], want)
 		}
 	}
 }

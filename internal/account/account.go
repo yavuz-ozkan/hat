@@ -97,6 +97,9 @@ func All(l layout.Layout) ([]Account, error) {
 		if _, err := os.Stat(acct.StateFile); err != nil {
 			continue
 		}
+		if _, listed := l.UsageFile(acct.ConfigDir); !listed {
+			continue
+		}
 		found = append(found, acct)
 	}
 	sort.SliceStable(found, func(i, j int) bool {
