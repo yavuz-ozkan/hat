@@ -13,12 +13,18 @@ import (
 
 const Repo = "yavuz-ozkan/hat"
 
+const DefaultReleasesURL = "https://github.com/" + Repo + "/releases"
+
 // Source is where releases come from.
 type Source interface {
 	LatestTag() (string, error)
 	// Fetch returns all of file name from release tag, or an error wrapping
 	// ErrNotPublished when the release has no such file.
 	Fetch(tag, name string) ([]byte, error)
+	// CheckProvenance says whether archive, already matched against
+	// checksums.txt, was built by hat's release workflow. An error means the
+	// check failed and the archive must not be installed.
+	CheckProvenance(asset string, archive []byte) (Provenance, error)
 }
 
 var ErrNotPublished = errors.New("not published in this release")
@@ -28,12 +34,16 @@ type GitHubReleases struct {
 	// Client must follow redirects: GitHub answers every download with one
 	// to its file storage.
 	Client *http.Client
+	GH     RunGH
 }
 
-func PublicReleases() GitHubReleases {
+// ReleasesAt reads releases from releasesURL: DefaultReleasesURL, unless
+// HAT_RELEASES_URL points at a mirror or a test server.
+func ReleasesAt(releasesURL string) GitHubReleases {
 	return GitHubReleases{
-		ReleasesURL: "https://github.com/" + Repo + "/releases",
+		ReleasesURL: strings.TrimSuffix(releasesURL, "/"),
 		Client:      &http.Client{Timeout: 5 * time.Minute},
+		GH:          GHOnPath,
 	}
 }
 

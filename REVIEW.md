@@ -9,6 +9,8 @@
 - On Windows, hat never runs Claude through a `.cmd` or `.bat` (`claude.Find`): `cmd.exe` would act on characters in the arguments hat passes.
 - `rm` must never delete what an account's links point at. `share.TestRemoveAllKeepsWhatLinksPointAt` is the proof on both Windows and Linux.
 - `hat upgrade` and both installers install only an archive whose SHA-256 matches the release's `checksums.txt`, and a failed install leaves the previous hat working.
+- When gh is on PATH and signed in, and the releases URL starts with `https://github.com/`, they also install only an archive that `gh attestation verify --repo yavuz-ozkan/hat --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml` accepts (`upgrade.GitHubReleases.CheckProvenance`, repeated in each installer). A missing, signed-out, or too-old gh never blocks an install, and says how to turn the check on; a failed verification always blocks it. `upgrade.TestInstallersCheckProvenanceTheSameWay` keeps the three in step.
+- With `HAT_RELEASES_URL` unset, the installers and `hat upgrade` read releases from `https://github.com/yavuz-ozkan/hat/releases` exactly as before. Pointing it outside github.com skips only the provenance check, never the checksum.
 - Error messages are for the person at the terminal: what went wrong and the next command to run.
 
 ## Known noise

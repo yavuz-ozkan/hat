@@ -36,13 +36,17 @@ jobs:
       - name: Known vulnerabilities
         if: runner.os == 'Linux'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
-      - name: install.ps1 parses in Windows PowerShell 5.1
+      - name: PowerShell scripts parse in Windows PowerShell 5.1
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $tokens = $null; $errors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\install.ps1", [ref]$tokens, [ref]$errors)
-          if ($errors) { $errors | ForEach-Object { Write-Host $_.Message }; exit 1 }
+          $broken = $false
+          foreach ($script in @(Get-Item install.ps1) + @(Get-ChildItem .github\scripts\*.ps1)) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors)
+            if ($errors) { $broken = $true; $errors | ForEach-Object { Write-Host "$($script.Name): $($_.Message)" } }
+          }
+          if ($broken) { exit 1 }
 
   release-build:
     runs-on: ubuntu-latest
@@ -62,3 +66,39 @@ jobs:
         run: sh .github/scripts/install-goreleaser.sh "$RUNNER_TEMP/goreleaser"
       - name: Snapshot build
         run: '"$RUNNER_TEMP/goreleaser/goreleaser" release --snapshot --clean'
+      - name: install.sh and hat upgrade against a fake release
+        run: sh .github/scripts/test-installers.sh
+      # The Windows job tests these same archives, the way a real release
+      # builds every platform on Linux.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snapshot
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/checksums.txt
+            dist/metadata.json
+          if-no-files-found: error
+          retention-days: 1
+
+  installers-windows:
+    needs: release-build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Go matches the go.mod toolchain line
+        shell: bash
+        run: sh .github/scripts/check-go-toolchain.sh
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: snapshot
+          path: dist
+      - name: install.ps1 and hat upgrade against a fake release, in Windows PowerShell 5.1
+        shell: powershell
+        run: .github/scripts/test-installers.ps1
+      - name: install.ps1 and hat upgrade against a fake release, in PowerShell 7
+        shell: pwsh
+        run: .github/scripts/test-installers.ps1

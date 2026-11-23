@@ -12,11 +12,38 @@
     $ProgressPreference = 'SilentlyContinue'
 
     $repo = 'yavuz-ozkan/hat'
-    $releases = "https://github.com/$repo/releases"
+    $releases = if ($env:HAT_RELEASES_URL) { $env:HAT_RELEASES_URL.TrimEnd('/') } else { "https://github.com/$repo/releases" }
     $binDir = if ($env:HAT_BIN_DIR) { $env:HAT_BIN_DIR } else { Join-Path $HOME '.local\bin' }
 
     function Stop-Install([string]$Message) {
         throw "hat install: $Message"
+    }
+
+    # Returns the line to show after installing, or throws when gh can't
+    # verify the archive. hat upgrade decides the same way
+    # (upgrade.CheckProvenance) and prints the same lines. Exit code 4 is gh's
+    # documented "needs a sign-in". gh before 2.49 has no attestation command.
+    function Test-Provenance([string]$Archive) {
+        if ($releases -notlike 'https://github.com/*') {
+            return "Build provenance not checked: HAT_RELEASES_URL isn't a github.com address, and only GitHub releases carry hat's attestations."
+        }
+        $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $gh) {
+            return "Build provenance not checked: the GitHub CLI isn't installed. To check it next time, install gh from https://cli.github.com and run gh auth login."
+        }
+        # With 'Stop', Windows PowerShell 5.1 turns the first line gh writes to
+        # stderr into a terminating error.
+        $ErrorActionPreference = 'Continue'
+        $said = & $gh.Source attestation verify $Archive --repo $repo --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml 2>&1 | ForEach-Object { "$_" }
+        $code = $LASTEXITCODE
+        $ErrorActionPreference = 'Stop'
+        $said = (@($said) -join ' ') -replace '\s+', ' '
+        if ($code -eq 0) { return "gh verified its build provenance: it was built by yavuz-ozkan/hat/.github/workflows/release.yml." }
+        if ($code -eq 4) { return "Build provenance not checked: gh isn't signed in. To check it next time, run gh auth login." }
+        if ($said -like '*unknown command "attestation"*') {
+            return "Build provenance not checked: this gh is too old to verify attestations. To check it next time, upgrade gh from https://cli.github.com."
+        }
+        Stop-Install "$(Split-Path -Leaf $Archive) matches its checksum, but gh couldn't verify it was built by yavuz-ozkan/hat/.github/workflows/release.yml, so nothing was installed. gh said: $($said.Trim()). Run this again; if gh's sign-in is the problem, run gh auth login first. If it keeps failing, report it at https://github.com/$repo/security."
     }
 
     $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
@@ -82,6 +109,7 @@
         if ($expected -ne $actual) {
             Stop-Install "$asset doesn't match its published checksum, so nothing was installed. Run this again; if it keeps failing, the release is damaged."
         }
+        $provenance = Test-Provenance (Join-Path $tmp $asset)
 
         Expand-Archive -Path (Join-Path $tmp $asset) -DestinationPath (Join-Path $tmp 'unpacked')
         New-Item -ItemType Directory -Force -Path $binDir | Out-Null
@@ -115,6 +143,7 @@
             Stop-Install "couldn't put the new hat in place ($installError). Your previous hat is still installed."
         }
         Write-Host "Installed hat $version to $target."
+        Write-Host $provenance
         Get-ChildItem -Path $binDir -Filter 'hat.exe.moved-aside-by-hat-*' |
             Where-Object { $_.Name -match '^hat\.exe\.moved-aside-by-hat-\d+$' } |
             Remove-Item -Force -ErrorAction SilentlyContinue

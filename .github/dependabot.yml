@@ -1,0 +1,19 @@
+# Version updates. Security updates are switched on in the repository's
+# settings and don't need an entry here. Workflows pin actions by commit SHA
+# with the version in a trailing comment; Dependabot bumps both together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: ci
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: deps

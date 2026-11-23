@@ -9,12 +9,43 @@ main() {
 	set -eu
 
 	repo=yavuz-ozkan/hat
-	releases="https://github.com/$repo/releases"
+	releases=${HAT_RELEASES_URL:-https://github.com/$repo/releases}
+	releases=${releases%/}
 	bin_dir=${HAT_BIN_DIR:-$HOME/.local/bin}
 
 	fail() {
 		echo "hat install: $1" >&2
 		exit 1
+	}
+
+	# Prints the line to show after installing, or fails when gh can't verify
+	# the archive. hat upgrade decides the same way (upgrade.CheckProvenance)
+	# and prints the same lines. Exit code 4 is gh's documented "needs a
+	# sign-in". gh before 2.49, such as Ubuntu 24.04's packaged one, has no
+	# attestation command.
+	check_provenance() {
+		case "$releases" in
+		https://github.com/*) ;;
+		*)
+			echo "Build provenance not checked: HAT_RELEASES_URL isn't a github.com address, and only GitHub releases carry hat's attestations."
+			return
+			;;
+		esac
+		if ! command -v gh >/dev/null 2>&1; then
+			echo "Build provenance not checked: the GitHub CLI isn't installed. To check it next time, install gh from https://cli.github.com and run gh auth login."
+			return
+		fi
+		said=$(gh attestation verify "$1" --repo "$repo" --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml 2>&1) && code=0 || code=$?
+		case "$code" in
+		0) echo "gh verified its build provenance: it was built by yavuz-ozkan/hat/.github/workflows/release.yml." ;;
+		4) echo "Build provenance not checked: gh isn't signed in. To check it next time, run gh auth login." ;;
+		*)
+			case "$said" in
+			*'unknown command "attestation"'*) echo "Build provenance not checked: this gh is too old to verify attestations. To check it next time, upgrade gh from https://cli.github.com." ;;
+			*) fail "${1##*/} matches its checksum, but gh couldn't verify it was built by yavuz-ozkan/hat/.github/workflows/release.yml, so nothing was installed. gh said: $(printf '%s' "$said" | tr -s '\n' ' '). Run this again; if gh's sign-in is the problem, run gh auth login first. If it keeps failing, report it at https://github.com/$repo/security." ;;
+			esac
+			;;
+		esac
 	}
 
 	[ "$(uname -s)" = Linux ] || fail "this script is for Linux. On Windows, run install.ps1 in PowerShell."
@@ -62,6 +93,8 @@ main() {
 		fail "couldn't download $asset. Release $tag may have no build for linux/$arch."
 	(cd "$tmp" && awk -v name="$asset" '$2 == name' checksums.txt | sha256sum -c - >/dev/null 2>&1) ||
 		fail "$asset doesn't match its published checksum, so nothing was installed. Run this again; if it keeps failing, the release is damaged."
+	# fail inside the command substitution only ends that subshell.
+	provenance=$(check_provenance "$tmp/$asset") || exit 1
 	tar -xzf "$tmp/$asset" -C "$tmp" hat
 
 	mkdir -p "$bin_dir"
@@ -71,6 +104,7 @@ main() {
 		fail "couldn't put the new hat in $bin_dir. Any hat already there is unchanged."
 	fi
 	echo "Installed hat $version to $bin_dir/hat."
+	echo "$provenance"
 	case ":$PATH:" in
 	*":$bin_dir:"*) ;;
 	*)
