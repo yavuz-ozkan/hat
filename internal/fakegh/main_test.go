@@ -78,3 +78,25 @@ func TestEachModeAnswersAsDocumented(t *testing.T) {
 		}
 	}
 }
+
+func TestHangsOnlyWhereItsModeSays(t *testing.T) {
+	auth := []string{"auth", "status", "--hostname", "github.com"}
+	verify := []string{"attestation", "verify", "hat.zip"}
+	cases := []struct {
+		mode string
+		args []string
+		want bool
+	}{
+		{"hangs-signing-in", auth, true},
+		{"hangs-signing-in", verify, false},
+		{"hangs-verifying", auth, false},
+		{"hangs-verifying", verify, true},
+		{"verifies", verify, false},
+		{"hangs-verifying", nil, false},
+	}
+	for _, c := range cases {
+		if got := hangsOn(c.mode, c.args); got != c.want {
+			t.Errorf("hangsOn(%s, %v) = %v, want %v", c.mode, c.args, got, c.want)
+		}
+	}
+}

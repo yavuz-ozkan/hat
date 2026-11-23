@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -56,8 +57,30 @@ var (
 	ErrGHTimedOut     = errors.New("gh didn't finish in time")
 )
 
-// ghDeadline matches the "2 minutes" in ghFailed's message.
-const ghDeadline = 2 * time.Minute
+const ghDeadlineDefault = 2 * time.Minute
+
+// ghDeadline is how long each gh run may take. HAT_TEST_GH_DEADLINE_SECONDS
+// lets the installer tests watch a hung gh give up without waiting 2 minutes.
+// It can only shorten the wait: anything but 1 to 119 seconds, written as
+// digits, leaves the default. Both installers read it the same way.
+func ghDeadline() time.Duration {
+	seconds := os.Getenv("HAT_TEST_GH_DEADLINE_SECONDS")
+	if seconds == "" || len(seconds) > 3 || strings.Trim(seconds, "0123456789") != "" {
+		return ghDeadlineDefault
+	}
+	n, _ := strconv.Atoi(seconds)
+	if n < 1 || n >= 120 {
+		return ghDeadlineDefault
+	}
+	return time.Duration(n) * time.Second
+}
+
+func describeDeadline(d time.Duration) string {
+	if d == ghDeadlineDefault {
+		return "2 minutes"
+	}
+	return fmt.Sprintf("%d seconds", int(d.Seconds()))
+}
 
 // ghProgram is the only name hat runs gh by. On Windows that's gh.exe: a
 // gh.cmd or gh.bat would run through cmd.exe, which acts on characters in the
@@ -74,7 +97,7 @@ func GHOnPath(args ...string) ([]byte, int, error) {
 	if err != nil {
 		return nil, 0, ErrGHNotInstalled
 	}
-	return runWithDeadline(ghDeadline, gh, args...)
+	return runWithDeadline(ghDeadline(), gh, args...)
 }
 
 func runWithDeadline(deadline time.Duration, program string, args ...string) ([]byte, int, error) {
@@ -147,7 +170,7 @@ func (g GitHubReleases) CheckProvenance(tag, asset string, archive []byte) (Prov
 
 func ghFailed(asset string, err error) error {
 	if errors.Is(err, ErrGHTimedOut) {
-		return fmt.Errorf("gh took longer than 2 minutes to check %s's build provenance, so it wasn't installed. Check your connection, then run hat upgrade again", asset)
+		return fmt.Errorf("gh took longer than %s to check %s's build provenance, so it wasn't installed. Check your connection, then run hat upgrade again", describeDeadline(ghDeadline()), asset)
 	}
 	return fmt.Errorf("couldn't start gh to check %s's build provenance (%v), so it wasn't installed. Check that gh --version runs, then run hat upgrade again", asset, err)
 }

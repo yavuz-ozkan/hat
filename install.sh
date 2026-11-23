@@ -36,13 +36,42 @@ main() {
 		fail "HAT_RELEASES_URL is '$releases', but it must start with https://, so nothing on the network can change what this installer downloads; plain http:// works only for this machine (127.0.0.1, ::1, or localhost). For example: HAT_RELEASES_URL=https://${releases#*://}"
 	}
 
+	# Each gh run may take 2 minutes, as in hat upgrade (upgrade.ghDeadline).
+	# HAT_TEST_GH_DEADLINE_SECONDS lets the tests watch a hung gh give up
+	# sooner; it can only shorten the wait, to 1 to 119 seconds written as
+	# digits. Without coreutils' timeout, gh runs with no limit rather than
+	# timeout becoming something this installer needs.
+	gh_limit=120
+	case "${HAT_TEST_GH_DEADLINE_SECONDS:-}" in
+	[0-9] | [0-9][0-9] | [0-9][0-9][0-9])
+		shortened=${HAT_TEST_GH_DEADLINE_SECONDS#"${HAT_TEST_GH_DEADLINE_SECONDS%%[!0]*}"}
+		if [ -n "$shortened" ] && [ "$shortened" -lt 120 ]; then gh_limit=$shortened; fi
+		;;
+	esac
+	if [ "$gh_limit" = 120 ]; then gh_limit_text="2 minutes"; else gh_limit_text="$gh_limit seconds"; fi
+	run_gh() {
+		if command -v timeout >/dev/null 2>&1; then
+			timeout "$gh_limit" gh "$@"
+		else
+			gh "$@"
+		fi
+	}
+	# Ends the install when gh didn't run to completion: 124 is timeout saying
+	# the limit passed, and 125 to 127 are timeout or the shell saying gh
+	# couldn't be run at all. gh itself never uses these codes.
+	stop_if_gh_broke() {
+		case "$1" in
+		124) fail "gh took longer than $gh_limit_text to check ${2##*/}'s build provenance, so nothing was installed. Check your connection, then run this again." ;;
+		125 | 126 | 127) fail "couldn't start gh to check ${2##*/}'s build provenance (exit $1), so nothing was installed. Check that gh --version runs, then run this again." ;;
+		esac
+	}
+
 	# Prints the line to show after installing, or fails when gh can't verify
 	# that the archive came from tag $2. hat upgrade decides the same way
 	# (upgrade.CheckProvenance) and prints the same lines. --hostname
 	# github.com keeps a GH_HOST pointing at GitHub Enterprise from sending the
 	# check there. gh before 2.49, such as Ubuntu 24.04's packaged one, has no
-	# attestation command. Exit codes 126 and 127 are the shell saying gh
-	# couldn't be run at all; gh itself never uses them.
+	# attestation command.
 	check_provenance() {
 		case "$releases" in
 		https://github.com/*) ;;
@@ -56,19 +85,19 @@ main() {
 			return
 		fi
 		# Only the exit code matters, so the output is never read.
-		gh auth status --hostname github.com >/dev/null 2>&1 && code=0 || code=$?
+		run_gh auth status --hostname github.com >/dev/null 2>&1 && code=0 || code=$?
+		stop_if_gh_broke "$code" "$1"
 		case "$code" in
 		0) ;;
-		126 | 127) fail "couldn't start gh to check ${1##*/}'s build provenance (exit $code), so nothing was installed. Check that gh --version runs, then run this again." ;;
 		*)
 			echo "Build provenance not checked: gh isn't signed in to github.com. To check it next time, run gh auth login --hostname github.com."
 			return
 			;;
 		esac
-		said=$(gh attestation verify "$1" --hostname github.com --repo "$repo" --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml --source-ref "refs/tags/$2" 2>&1) && code=0 || code=$?
+		said=$(run_gh attestation verify "$1" --hostname github.com --repo "$repo" --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml --source-ref "refs/tags/$2" 2>&1) && code=0 || code=$?
+		stop_if_gh_broke "$code" "$1"
 		case "$code" in
 		0) echo "gh verified its build provenance: it was built by yavuz-ozkan/hat/.github/workflows/release.yml." ;;
-		126 | 127) fail "couldn't start gh to check ${1##*/}'s build provenance (exit $code), so nothing was installed. Check that gh --version runs, then run this again." ;;
 		*)
 			case "$said" in
 			*'unknown command "attestation"'*) echo "Build provenance not checked: this gh is too old to verify attestations. To check it next time, upgrade gh from https://cli.github.com." ;;

@@ -150,6 +150,39 @@ func TestCheckProvenanceRefusesWhenGHRunsPastItsDeadline(t *testing.T) {
 	}
 }
 
+func TestGHDeadlineCanOnlyBeShortened(t *testing.T) {
+	cases := map[string]time.Duration{
+		"":     2 * time.Minute,
+		"3":    3 * time.Second,
+		"119":  119 * time.Second,
+		"120":  2 * time.Minute,
+		"999":  2 * time.Minute,
+		"0":    2 * time.Minute,
+		"1000": 2 * time.Minute,
+		"+5":   2 * time.Minute,
+		"-5":   2 * time.Minute,
+		"5s":   2 * time.Minute,
+		" 5":   2 * time.Minute,
+	}
+	for value, want := range cases {
+		t.Setenv("HAT_TEST_GH_DEADLINE_SECONDS", value)
+		if got := ghDeadline(); got != want {
+			t.Errorf("HAT_TEST_GH_DEADLINE_SECONDS=%q: %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestTimeoutMessageNamesTheDeadlineInForce(t *testing.T) {
+	t.Setenv("HAT_TEST_GH_DEADLINE_SECONDS", "")
+	if err := ghFailed("hat.zip", ErrGHTimedOut); !strings.Contains(err.Error(), "gh took longer than 2 minutes to check hat.zip's build provenance") {
+		t.Errorf("default: %v", err)
+	}
+	t.Setenv("HAT_TEST_GH_DEADLINE_SECONDS", "3")
+	if err := ghFailed("hat.zip", ErrGHTimedOut); !strings.Contains(err.Error(), "gh took longer than 3 seconds") {
+		t.Errorf("shortened: %v", err)
+	}
+}
+
 func TestCheckProvenanceIsSkippedForReleasesOffGitHub(t *testing.T) {
 	gh := signedIn(ghAnswer{})
 
@@ -331,6 +364,8 @@ func TestInstallersCheckProvenanceTheSameWay(t *testing.T) {
 	shared := []string{
 		"https://github.com/*",
 		"couldn't start gh to check",
+		"gh took longer than",
+		"HAT_TEST_GH_DEADLINE_SECONDS",
 		"must start with https://, so nothing on the network can change what",
 		"plain http:// works only for this machine (127.0.0.1, ::1, or localhost)",
 	}

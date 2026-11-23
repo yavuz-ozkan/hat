@@ -34,30 +34,57 @@
         Stop-Install "HAT_RELEASES_URL is '$releases', but it must start with https://, so nothing on the network can change what this installer downloads; plain http:// works only for this machine (127.0.0.1, ::1, or localhost). For example: `$env:HAT_RELEASES_URL = '$example'"
     }
 
-    # Runs gh and returns its exit code and output. A gh that can't start
-    # either throws or leaves $LASTEXITCODE as it was, so the code starts out
-    # empty and anything short of gh actually running ends the install.
+    # Each gh run may take 2 minutes, as in hat upgrade (upgrade.ghDeadline).
+    # HAT_TEST_GH_DEADLINE_SECONDS lets the tests watch a hung gh give up
+    # sooner; it can only shorten the wait, to 1 to 119 seconds written as
+    # digits.
+    $ghLimit = 120
+    if ("$env:HAT_TEST_GH_DEADLINE_SECONDS" -match '\A[0-9]{1,3}\z') {
+        $shortened = [int]$env:HAT_TEST_GH_DEADLINE_SECONDS
+        if ($shortened -ge 1 -and $shortened -lt 120) { $ghLimit = $shortened }
+    }
+    $ghLimitText = if ($ghLimit -eq 120) { '2 minutes' } else { "$ghLimit seconds" }
+
+    # Quotes one argument the way Windows programs split their command line.
+    # Start-Process joins its arguments with spaces and quotes nothing.
+    function ConvertTo-WindowsArgument([string]$Value) {
+        if ($Value -and $Value -notmatch '[\s"]') { return $Value }
+        '"' + ($Value -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
+    }
+
+    # Runs gh with a time limit and returns its exit code and output. Anything
+    # short of gh starting, finishing in time, and reporting an exit code ends
+    # the install. The output goes through files in the archive's folder,
+    # because reading two redirected pipes while waiting can deadlock.
     function Invoke-GH([string]$Gh, [string]$Archive, [string[]]$Arguments) {
-        # With 'Stop', Windows PowerShell 5.1 turns the first line gh writes to
-        # stderr into a terminating error.
-        $ErrorActionPreference = 'Continue'
-        $global:LASTEXITCODE = $null
-        $output = @()
-        $launchError = ''
+        $name = Split-Path -Leaf $Archive
+        $outFile = Join-Path (Split-Path -Parent $Archive) ('gh-' + [guid]::NewGuid() + '.out')
+        $errFile = "$outFile.err"
         try {
-            $output = @(& $Gh @Arguments 2>&1 | ForEach-Object { "$_" })
+            $process = Start-Process -FilePath $Gh -ArgumentList (($Arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ') `
+                -NoNewWindow -PassThru -RedirectStandardOutput $outFile -RedirectStandardError $errFile
         }
         catch {
             # The outer message carries this script's line and column; the
             # innermost one is Windows saying why gh didn't start.
             $cause = $_.Exception
             while ($cause.InnerException) { $cause = $cause.InnerException }
-            $launchError = $cause.Message
+            Stop-Install "couldn't start gh to check $name's build provenance ($($cause.Message)), so nothing was installed. Check that gh --version runs, then run this again."
         }
-        $code = $global:LASTEXITCODE
-        if ($launchError -or $null -eq $code) {
-            $why = if ($launchError) { $launchError } else { $output -join ' ' }
-            Stop-Install "couldn't start gh to check $(Split-Path -Leaf $Archive)'s build provenance ($why), so nothing was installed. Check that gh --version runs, then run this again."
+        # Windows PowerShell 5.1 reports no exit code unless the process
+        # handle was opened while the process ran.
+        $null = $process.Handle
+        if (-not $process.WaitForExit($ghLimit * 1000)) {
+            # Kill throws when gh exits between the wait and the kill.
+            try { $process.Kill() } catch [InvalidOperationException] { }
+            Stop-Install "gh took longer than $ghLimitText to check $name's build provenance, so nothing was installed. Check your connection, then run this again."
+        }
+        $process.WaitForExit()
+        $code = $process.ExitCode
+        $output = @(Get-Content -Path $outFile, $errFile -ErrorAction SilentlyContinue)
+        Remove-Item -Force $outFile, $errFile -ErrorAction SilentlyContinue
+        if ($null -eq $code) {
+            Stop-Install "couldn't start gh to check $name's build provenance (Windows reported no exit code for it), so nothing was installed. Check that gh --version runs, then run this again."
         }
         [pscustomobject]@{ Code = $code; Output = (($output -join ' ') -replace '\s+', ' ').Trim() }
     }

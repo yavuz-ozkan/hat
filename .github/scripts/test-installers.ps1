@@ -1,6 +1,6 @@
 # Runs install.ps1 the way "irm | iex" runs it, and hat upgrade, against fake
 # releases served from a GoReleaser snapshot (internal/fakereleases), then
-# against the real v0.1.1 on github.com with a stand-in gh (internal/fakegh)
+# against the newest real release on github.com with a stand-in gh (internal/fakegh)
 # for every provenance outcome. Each case checks the message, that a good
 # install replaced the hat already there, and that a refused one left it byte
 # for byte. From the repository root, in Windows PowerShell 5.1 or
@@ -10,13 +10,14 @@
 #   .github/scripts/test-installers.ps1 [-OwnGh]
 #
 # The machine's own gh is hidden from Path, so the result doesn't depend on
-# whether it has one or is signed in. -OwnGh also installs v0.1.1 and runs
+# whether it has one or is signed in. -OwnGh also installs that release and runs
 # hat upgrade with this machine's gh, which verifies when it's signed in to
 # github.com.
 param([switch]$OwnGh)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+Remove-Item Env:HAT_VERSION, Env:HAT_RELEASES_URL, Env:HAT_BIN_DIR, Env:HAT_TEST_GH_DEADLINE_SECONDS -ErrorAction SilentlyContinue
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     'AMD64' { 'amd64' }
@@ -110,25 +111,26 @@ try {
         New-Item -ItemType Directory -Path $script:bin | Out-Null
         Copy-Item $From "$script:bin\hat.exe"
     }
-    # Setting a variable to '' removes it, so '' means unset.
-    function Set-RunEnvironment([string]$ReleasesUrl, [string]$Path, [string]$FakeGh, [string]$GhHost) {
+    # Setting a variable to '' removes it, so '' means unset. An unset
+    # deadline leaves gh its 2 minutes.
+    function Set-RunEnvironment([string]$ReleasesUrl, [string]$Path, [string]$FakeGh, [string]$GhHost, [string]$Deadline) {
         $env:HAT_RELEASES_URL = $ReleasesUrl
         $env:Path = $Path
         $env:FAKEGH = $FakeGh
         $env:GH_HOST = $GhHost
+        $env:HAT_TEST_GH_DEADLINE_SECONDS = $Deadline
     }
     function Reset-RunEnvironment {
-        Remove-Item Env:HAT_BIN_DIR, Env:HAT_RELEASES_URL, Env:HAT_VERSION, Env:FAKEGH -ErrorAction SilentlyContinue
+        Remove-Item Env:HAT_BIN_DIR, Env:HAT_RELEASES_URL, Env:FAKEGH, Env:HAT_TEST_GH_DEADLINE_SECONDS -ErrorAction SilentlyContinue
         $env:GH_HOST = $savedGhHost
         $env:Path = $savedPath
     }
 
     # Pipes the installer's text to Invoke-Expression, as irm | iex does, so
     # a failure is a thrown error rather than an exit code.
-    function Invoke-Installer([string]$HatVersion, [string]$ReleasesUrl, [string]$Path, [string]$FakeGh, [string]$GhHost) {
-        Set-RunEnvironment $ReleasesUrl $Path $FakeGh $GhHost
+    function Invoke-Installer([string]$ReleasesUrl, [string]$Path, [string]$FakeGh, [string]$GhHost, [string]$Deadline) {
+        Set-RunEnvironment $ReleasesUrl $Path $FakeGh $GhHost $Deadline
         $env:HAT_BIN_DIR = $script:bin
-        $env:HAT_VERSION = $HatVersion
         try {
             $lines = $installer | Invoke-Expression 6>&1 | ForEach-Object { "$_" }
             $script:outcome = [pscustomobject]@{ Code = 0; Output = (@($lines) -join "`n") }
@@ -138,27 +140,42 @@ try {
         }
         finally { Reset-RunEnvironment }
     }
-    function Invoke-Upgrade([string]$ReleasesUrl, [string]$Path, [string]$FakeGh, [string]$GhHost) {
-        Set-RunEnvironment $ReleasesUrl $Path $FakeGh $GhHost
+    function Invoke-Upgrade([string]$ReleasesUrl, [string]$Path, [string]$FakeGh, [string]$GhHost, [string]$Deadline) {
+        Set-RunEnvironment $ReleasesUrl $Path $FakeGh $GhHost $Deadline
         try { $script:outcome = Invoke-Native "$script:bin\hat.exe" @('upgrade') }
         finally { Reset-RunEnvironment }
     }
     function Install-FakeRelease([string]$Scenario) {
         Set-Bin "install-$Scenario" "$work\previous"
-        Invoke-Installer '' "$base/$Scenario/releases" $noGhPath '' ''
+        Invoke-Installer "$base/$Scenario/releases" $noGhPath '' '' ''
     }
     function Invoke-FakeUpgrade([string]$Scenario) {
         Set-Bin "upgrade-$Scenario" "$work\old-hat.exe"
-        Invoke-Upgrade "$base/$Scenario/releases" $noGhPath '' ''
+        Invoke-Upgrade "$base/$Scenario/releases" $noGhPath '' '' ''
     }
-    function Install-RealRelease([string]$Name, [string]$Path, [string]$FakeGh, [string]$GhHost) {
+    # The newest release on github.com, which the installer finds itself.
+    function Install-RealRelease([string]$Name, [string]$Path, [string]$FakeGh, [string]$GhHost, [string]$Deadline) {
         Set-Bin "real-$Name" "$work\previous"
-        Invoke-Installer '0.1.1' '' $Path $FakeGh $GhHost
+        Invoke-Installer '' $Path $FakeGh $GhHost $Deadline
     }
-    function Invoke-RealUpgrade([string]$Name, [string]$Path, [string]$FakeGh, [string]$GhHost) {
+    function Invoke-RealUpgrade([string]$Name, [string]$Path, [string]$FakeGh, [string]$GhHost, [string]$Deadline) {
         Set-Bin "real-upgrade-$Name" "$work\old-hat.exe"
-        Invoke-Upgrade '' $Path $FakeGh $GhHost
+        Invoke-Upgrade '' $Path $FakeGh $GhHost $Deadline
     }
+
+    # The newest stable release, found the way both installers find it, so
+    # each case below can check that's what it installed.
+    $request = [Net.HttpWebRequest]::Create('https://github.com/yavuz-ozkan/hat/releases/latest')
+    $request.Method = 'HEAD'
+    $request.AllowAutoRedirect = $false
+    $response = $request.GetResponse()
+    $location = $response.Headers['Location']
+    ([IDisposable]$response).Dispose()
+    if ($location -cnotmatch '^https://github\.com/yavuz-ozkan/hat/releases/tag/v([^/]+)$') {
+        throw "Couldn't find hat's newest release on github.com (sent to '$location'). Check the connection, then run this again."
+    }
+    $newest = $Matches[1]
+    $timedOut = 'gh took longer than 3 seconds to check'
 
     $offGitHub = "Build provenance not checked: HAT_RELEASES_URL isn't a github.com address"
     $noRelease = 'no published release'
@@ -181,7 +198,7 @@ try {
     Install-FakeRelease 'no-releases'
     Test-Case "install.ps1 says there's no published release when there are none" { Test-Refused $noRelease }
     Set-Bin 'install-plain-http' "$work\previous"
-    Invoke-Installer '' 'http://mirror.example/releases' $noGhPath '' ''
+    Invoke-Installer 'http://mirror.example/releases' $noGhPath '' '' ''
     Test-Case 'install.ps1 refuses a plain http:// mirror, suggesting https://' { Test-Refused $notHttps }
 
     Invoke-FakeUpgrade 'release'
@@ -195,52 +212,60 @@ try {
     Invoke-FakeUpgrade 'no-releases'
     Test-Case "hat upgrade says there's no published release when there are none" { Test-UpgradeRefused $noRelease }
     Set-Bin 'upgrade-plain-http' "$work\old-hat.exe"
-    Invoke-Upgrade 'http://mirror.example/releases' $noGhPath '' ''
+    Invoke-Upgrade 'http://mirror.example/releases' $noGhPath '' '' ''
     Test-Case 'hat upgrade refuses a plain http:// mirror, suggesting https://' { Test-UpgradeRefused $notHttps }
 
-    Install-RealRelease 'no-gh' $noGhPath '' ''
-    Test-Case 'install.ps1 installs v0.1.1 without gh, saying how to check provenance' { Test-Installed '0.1.1' $noGh }
-    Install-RealRelease 'cmd-gh' $cmdGhPath '' ''
-    Test-Case 'install.ps1 ignores a gh.cmd and treats it as no gh' { Test-Installed '0.1.1' $noGh }
-    Install-RealRelease 'verifies' $fakeGhPath 'verifies' ''
-    Test-Case 'install.ps1 installs v0.1.1 when gh verifies it' { Test-Installed '0.1.1' $verified }
-    Install-RealRelease 'enterprise' $fakeGhPath 'verifies' 'ghe.example.com'
-    Test-Case 'install.ps1 still asks github.com when GH_HOST is an enterprise host' { Test-Installed '0.1.1' $verified }
-    Install-RealRelease 'fails' $fakeGhPath 'fails' ''
-    Test-Case "install.ps1 refuses v0.1.1 when gh can't verify it and keeps the previous hat" { Test-Refused $cantVerify }
-    Install-RealRelease 'signed-out' $fakeGhPath 'signed-out' ''
-    Test-Case "install.ps1 installs v0.1.1 when gh isn't signed in to github.com, saying how to sign in" { Test-Installed '0.1.1' $signedOut }
-    Install-RealRelease 'too-old' $fakeGhPath 'too-old' ''
-    Test-Case 'install.ps1 installs v0.1.1 with a gh too old to verify, saying so' { Test-Installed '0.1.1' $tooOld }
-    Install-RealRelease 'cant-start' $brokenGhPath '' ''
-    Test-Case "install.ps1 refuses v0.1.1 when gh can't start and keeps the previous hat" { Test-Refused $cantStart }
+    Install-RealRelease 'no-gh' $noGhPath '' '' ''
+    Test-Case "install.ps1 installs v$newest without gh, saying how to check provenance" { Test-Installed $newest $noGh }
+    Install-RealRelease 'cmd-gh' $cmdGhPath '' '' ''
+    Test-Case 'install.ps1 ignores a gh.cmd and treats it as no gh' { Test-Installed $newest $noGh }
+    Install-RealRelease 'verifies' $fakeGhPath 'verifies' '' ''
+    Test-Case "install.ps1 installs v$newest when gh verifies it" { Test-Installed $newest $verified }
+    Install-RealRelease 'enterprise' $fakeGhPath 'verifies' 'ghe.example.com' ''
+    Test-Case 'install.ps1 still asks github.com when GH_HOST is an enterprise host' { Test-Installed $newest $verified }
+    Install-RealRelease 'fails' $fakeGhPath 'fails' '' ''
+    Test-Case "install.ps1 refuses v$newest when gh can't verify it and keeps the previous hat" { Test-Refused $cantVerify }
+    Install-RealRelease 'signed-out' $fakeGhPath 'signed-out' '' ''
+    Test-Case "install.ps1 installs v$newest when gh isn't signed in to github.com, saying how to sign in" { Test-Installed $newest $signedOut }
+    Install-RealRelease 'too-old' $fakeGhPath 'too-old' '' ''
+    Test-Case "install.ps1 installs v$newest with a gh too old to verify, saying so" { Test-Installed $newest $tooOld }
+    Install-RealRelease 'cant-start' $brokenGhPath '' '' ''
+    Test-Case "install.ps1 refuses v$newest when gh can't start and keeps the previous hat" { Test-Refused $cantStart }
+    Install-RealRelease 'hangs-signing-in' $fakeGhPath 'hangs-signing-in' '' '3'
+    Test-Case 'install.ps1 gives up on a gh auth status that never returns and keeps the previous hat' { Test-Refused $timedOut }
+    Install-RealRelease 'hangs-verifying' $fakeGhPath 'hangs-verifying' '' '3'
+    Test-Case 'install.ps1 gives up on a gh attestation verify that never returns and keeps the previous hat' { Test-Refused $timedOut }
 
-    Invoke-RealUpgrade 'no-gh' $noGhPath '' ''
-    Test-Case 'hat upgrade installs the newest release without gh, saying how to check provenance' { Test-Upgraded '' $noGh }
-    Invoke-RealUpgrade 'cmd-gh' $cmdGhPath '' ''
-    Test-Case 'hat upgrade ignores a gh.cmd and treats it as no gh' { Test-Upgraded '' $noGh }
-    Invoke-RealUpgrade 'verifies' $fakeGhPath 'verifies' ''
-    Test-Case 'hat upgrade installs the newest release when gh verifies it' { Test-Upgraded '' $verified }
-    Invoke-RealUpgrade 'enterprise' $fakeGhPath 'verifies' 'ghe.example.com'
-    Test-Case 'hat upgrade still asks github.com when GH_HOST is an enterprise host' { Test-Upgraded '' $verified }
-    Invoke-RealUpgrade 'fails' $fakeGhPath 'fails' ''
-    Test-Case "hat upgrade refuses the newest release when gh can't verify it and keeps the old hat" { Test-UpgradeRefused $cantVerify }
-    Invoke-RealUpgrade 'signed-out' $fakeGhPath 'signed-out' ''
-    Test-Case "hat upgrade installs the newest release when gh isn't signed in to github.com, saying how to sign in" { Test-Upgraded '' $signedOut }
-    Invoke-RealUpgrade 'too-old' $fakeGhPath 'too-old' ''
-    Test-Case 'hat upgrade installs the newest release with a gh too old to verify, saying so' { Test-Upgraded '' $tooOld }
-    Invoke-RealUpgrade 'cant-start' $brokenGhPath '' ''
-    Test-Case "hat upgrade refuses the newest release when gh can't start and keeps the old hat" { Test-UpgradeRefused $cantStart }
+    Invoke-RealUpgrade 'no-gh' $noGhPath '' '' ''
+    Test-Case "hat upgrade installs v$newest without gh, saying how to check provenance" { Test-Upgraded $newest $noGh }
+    Invoke-RealUpgrade 'cmd-gh' $cmdGhPath '' '' ''
+    Test-Case 'hat upgrade ignores a gh.cmd and treats it as no gh' { Test-Upgraded $newest $noGh }
+    Invoke-RealUpgrade 'verifies' $fakeGhPath 'verifies' '' ''
+    Test-Case "hat upgrade installs v$newest when gh verifies it" { Test-Upgraded $newest $verified }
+    Invoke-RealUpgrade 'enterprise' $fakeGhPath 'verifies' 'ghe.example.com' ''
+    Test-Case 'hat upgrade still asks github.com when GH_HOST is an enterprise host' { Test-Upgraded $newest $verified }
+    Invoke-RealUpgrade 'fails' $fakeGhPath 'fails' '' ''
+    Test-Case "hat upgrade refuses v$newest when gh can't verify it and keeps the old hat" { Test-UpgradeRefused $cantVerify }
+    Invoke-RealUpgrade 'signed-out' $fakeGhPath 'signed-out' '' ''
+    Test-Case "hat upgrade installs v$newest when gh isn't signed in to github.com, saying how to sign in" { Test-Upgraded $newest $signedOut }
+    Invoke-RealUpgrade 'too-old' $fakeGhPath 'too-old' '' ''
+    Test-Case "hat upgrade installs v$newest with a gh too old to verify, saying so" { Test-Upgraded $newest $tooOld }
+    Invoke-RealUpgrade 'cant-start' $brokenGhPath '' '' ''
+    Test-Case "hat upgrade refuses v$newest when gh can't start and keeps the old hat" { Test-UpgradeRefused $cantStart }
+    Invoke-RealUpgrade 'hangs-signing-in' $fakeGhPath 'hangs-signing-in' '' '3'
+    Test-Case 'hat upgrade gives up on a gh auth status that never returns and keeps the old hat' { Test-UpgradeRefused $timedOut }
+    Invoke-RealUpgrade 'hangs-verifying' $fakeGhPath 'hangs-verifying' '' '3'
+    Test-Case 'hat upgrade gives up on a gh attestation verify that never returns and keeps the old hat' { Test-UpgradeRefused $timedOut }
 
     if ($OwnGh) {
         if (-not (Get-Command gh.exe -CommandType Application -ErrorAction SilentlyContinue)) {
             throw '-OwnGh needs gh.exe on Path. Install it from https://cli.github.com, then run this again.'
         }
         $ownGhSays = if ((Invoke-Native 'gh.exe' @('auth', 'status', '--hostname', 'github.com')).Code -eq 0) { $verified } else { $signedOut }
-        Install-RealRelease 'own-gh' $savedPath '' $savedGhHost
-        Test-Case "install.ps1 installs v0.1.1 with this machine's gh: $ownGhSays" { Test-Installed '0.1.1' $ownGhSays }
-        Invoke-RealUpgrade 'own-gh' $savedPath '' $savedGhHost
-        Test-Case "hat upgrade installs the newest release with this machine's gh" { Test-Upgraded '' $ownGhSays }
+        Install-RealRelease 'own-gh' $savedPath '' $savedGhHost ''
+        Test-Case "install.ps1 installs v$newest with this machine's gh: $ownGhSays" { Test-Installed $newest $ownGhSays }
+        Invoke-RealUpgrade 'own-gh' $savedPath '' $savedGhHost ''
+        Test-Case "hat upgrade installs v$newest with this machine's gh" { Test-Upgraded $newest $ownGhSays }
     }
 
     Write-Host "$script:passed passed, $script:failed failed."

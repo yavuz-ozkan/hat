@@ -12,6 +12,8 @@
 //	            has no attestation for
 //	signed-out  gh auth status fails
 //	too-old     signed in; no attestation command, like gh before 2.49
+//	hangs-signing-in  gh auth status never returns
+//	hangs-verifying   signed in; attestation verify never returns
 //
 // Like gh, it sends a command without --hostname to GH_HOST, or github.com
 // when that's unset.
@@ -24,6 +26,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"time"
 )
 
 const (
@@ -33,7 +36,18 @@ const (
 )
 
 func main() {
-	os.Exit(answer(os.Getenv("FAKEGH"), os.Getenv("GH_HOST"), os.Args[1:], os.Stderr))
+	mode := os.Getenv("FAKEGH")
+	if hangsOn(mode, os.Args[1:]) {
+		time.Sleep(10 * time.Minute)
+	}
+	os.Exit(answer(mode, os.Getenv("GH_HOST"), os.Args[1:], os.Stderr))
+}
+
+func hangsOn(mode string, args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	return mode == "hangs-signing-in" && args[0] == "auth" || mode == "hangs-verifying" && args[0] == "attestation"
 }
 
 func answer(mode, ghHost string, args []string, stderr io.Writer) int {
@@ -77,7 +91,7 @@ func verify(mode, host string, args []string, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Error: HTTP 404: Not Found (fakegh has no attestation for this archive)")
 		return 1
 	case mode != "verifies":
-		fmt.Fprintf(stderr, "fakegh: FAKEGH=%q isn't one of verifies, fails, signed-out, too-old\n", mode)
+		fmt.Fprintf(stderr, "fakegh: FAKEGH=%q isn't one of verifies, fails, signed-out, too-old, hangs-signing-in, hangs-verifying\n", mode)
 		return 1
 	}
 	archive := args[2]

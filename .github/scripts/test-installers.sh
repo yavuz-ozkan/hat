@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs install.sh and hat upgrade against fake releases served from a
-# GoReleaser snapshot (internal/fakereleases), then against the real v0.1.1
-# on github.com with a stand-in gh (internal/fakegh) for every provenance
+# GoReleaser snapshot (internal/fakereleases), then against the newest real
+# release on github.com with a stand-in gh (internal/fakegh) for every provenance
 # outcome. Each case checks the message, that a good install replaced the
 # hat already there, and that a refused one left it byte for byte. From the
 # repository root:
@@ -10,7 +10,7 @@
 #   sh .github/scripts/test-installers.sh [--own-gh]
 #
 # The machine's own gh is hidden from PATH, so the result doesn't depend on
-# whether it has one or is signed in. --own-gh also installs v0.1.1 and runs
+# whether it has one or is signed in. --own-gh also installs that release and runs
 # hat upgrade with this machine's gh, which verifies when it's signed in to
 # github.com.
 set -eu
@@ -24,7 +24,7 @@ case "${1:-}" in
 	exit 2
 	;;
 esac
-unset HAT_VERSION HAT_RELEASES_URL HAT_BIN_DIR
+unset HAT_VERSION HAT_RELEASES_URL HAT_BIN_DIR HAT_TEST_GH_DEADLINE_SECONDS
 
 case "$(uname -m)" in
 x86_64 | amd64) arch=amd64 ;;
@@ -182,46 +182,67 @@ old_hat upgrade-plain-http
 run env PATH="$no_gh_path" HAT_RELEASES_URL=http://mirror.example/releases "$bin/hat" upgrade
 check "hat upgrade refuses a plain http:// mirror, suggesting https://" upgrade_refused "$not_https"
 
-# install_real <name> <PATH> <FAKEGH> <GH_HOST>: install.sh of v0.1.1 from
-# github.com. An empty GH_HOST is the same as none to fakegh.
+# The newest stable release, found the way both installers find it, so each
+# case below can check that's what it installed.
+answer=$(curl -sS -I -o /dev/null -w '%{http_code} %{redirect_url}' https://github.com/yavuz-ozkan/hat/releases/latest)
+case "$answer" in
+3??" https://github.com/yavuz-ozkan/hat/releases/tag/v"*) newest=${answer##*/tag/v} ;;
+*)
+	echo "Couldn't find hat's newest release on github.com (got '$answer'). Check the connection, then run this again." >&2
+	exit 1
+	;;
+esac
+
+# install_real <name> <PATH> <FAKEGH> <GH_HOST> [deadline]: install.sh of the
+# newest release from github.com. An empty GH_HOST is the same as none to
+# fakegh, and an empty deadline leaves gh its 2 minutes.
 install_real() {
 	previous_hat "real-$1"
-	run env PATH="$2" FAKEGH="$3" GH_HOST="$4" HAT_VERSION=0.1.1 HAT_BIN_DIR="$bin" sh ./install.sh
+	run env PATH="$2" FAKEGH="$3" GH_HOST="$4" HAT_TEST_GH_DEADLINE_SECONDS="${5:-}" HAT_BIN_DIR="$bin" sh ./install.sh
 }
 upgrade_real() {
 	old_hat "real-upgrade-$1"
-	run env PATH="$2" FAKEGH="$3" GH_HOST="$4" "$bin/hat" upgrade
+	run env PATH="$2" FAKEGH="$3" GH_HOST="$4" HAT_TEST_GH_DEADLINE_SECONDS="${5:-}" "$bin/hat" upgrade
 }
+timed_out="gh took longer than 3 seconds to check"
 
 install_real no-gh "$no_gh_path" "" ""
-check "install.sh installs v0.1.1 without gh, saying how to check provenance" installed_saying 0.1.1 "$no_gh"
+check "install.sh installs v$newest without gh, saying how to check provenance" installed_saying "$newest" "$no_gh"
 install_real verifies "$fake_gh_path" verifies ""
-check "install.sh installs v0.1.1 when gh verifies it" installed_saying 0.1.1 "$verified"
+check "install.sh installs v$newest when gh verifies it" installed_saying "$newest" "$verified"
 install_real enterprise "$fake_gh_path" verifies ghe.example.com
-check "install.sh still asks github.com when GH_HOST is an enterprise host" installed_saying 0.1.1 "$verified"
+check "install.sh still asks github.com when GH_HOST is an enterprise host" installed_saying "$newest" "$verified"
 install_real fails "$fake_gh_path" fails ""
-check "install.sh refuses v0.1.1 when gh can't verify it and keeps the previous hat" refused "$cant_verify"
+check "install.sh refuses v$newest when gh can't verify it and keeps the previous hat" refused "$cant_verify"
 install_real signed-out "$fake_gh_path" signed-out ""
-check "install.sh installs v0.1.1 when gh isn't signed in to github.com, saying how to sign in" installed_saying 0.1.1 "$signed_out"
+check "install.sh installs v$newest when gh isn't signed in to github.com, saying how to sign in" installed_saying "$newest" "$signed_out"
 install_real too-old "$fake_gh_path" too-old ""
-check "install.sh installs v0.1.1 with a gh too old to verify, saying so" installed_saying 0.1.1 "$too_old"
+check "install.sh installs v$newest with a gh too old to verify, saying so" installed_saying "$newest" "$too_old"
 install_real cant-start "$broken_gh_path" "" ""
-check "install.sh refuses v0.1.1 when gh can't start and keeps the previous hat" refused "$cant_start"
+check "install.sh refuses v$newest when gh can't start and keeps the previous hat" refused "$cant_start"
+install_real hangs-signing-in "$fake_gh_path" hangs-signing-in "" 3
+check "install.sh gives up on a gh auth status that never returns and keeps the previous hat" refused "$timed_out"
+install_real hangs-verifying "$fake_gh_path" hangs-verifying "" 3
+check "install.sh gives up on a gh attestation verify that never returns and keeps the previous hat" refused "$timed_out"
 
 upgrade_real no-gh "$no_gh_path" "" ""
-check "hat upgrade installs the newest release without gh, saying how to check provenance" upgraded_saying "" "$no_gh"
+check "hat upgrade installs v$newest without gh, saying how to check provenance" upgraded_saying "$newest" "$no_gh"
 upgrade_real verifies "$fake_gh_path" verifies ""
-check "hat upgrade installs the newest release when gh verifies it" upgraded_saying "" "$verified"
+check "hat upgrade installs v$newest when gh verifies it" upgraded_saying "$newest" "$verified"
 upgrade_real enterprise "$fake_gh_path" verifies ghe.example.com
-check "hat upgrade still asks github.com when GH_HOST is an enterprise host" upgraded_saying "" "$verified"
+check "hat upgrade still asks github.com when GH_HOST is an enterprise host" upgraded_saying "$newest" "$verified"
 upgrade_real fails "$fake_gh_path" fails ""
-check "hat upgrade refuses the newest release when gh can't verify it and keeps the old hat" upgrade_refused "$cant_verify"
+check "hat upgrade refuses v$newest when gh can't verify it and keeps the old hat" upgrade_refused "$cant_verify"
 upgrade_real signed-out "$fake_gh_path" signed-out ""
-check "hat upgrade installs the newest release when gh isn't signed in to github.com, saying how to sign in" upgraded_saying "" "$signed_out"
+check "hat upgrade installs v$newest when gh isn't signed in to github.com, saying how to sign in" upgraded_saying "$newest" "$signed_out"
 upgrade_real too-old "$fake_gh_path" too-old ""
-check "hat upgrade installs the newest release with a gh too old to verify, saying so" upgraded_saying "" "$too_old"
+check "hat upgrade installs v$newest with a gh too old to verify, saying so" upgraded_saying "$newest" "$too_old"
 upgrade_real cant-start "$broken_gh_path" "" ""
-check "hat upgrade refuses the newest release when gh can't start and keeps the old hat" upgrade_refused "$cant_start"
+check "hat upgrade refuses v$newest when gh can't start and keeps the old hat" upgrade_refused "$cant_start"
+upgrade_real hangs-signing-in "$fake_gh_path" hangs-signing-in "" 3
+check "hat upgrade gives up on a gh auth status that never returns and keeps the old hat" upgrade_refused "$timed_out"
+upgrade_real hangs-verifying "$fake_gh_path" hangs-verifying "" 3
+check "hat upgrade gives up on a gh attestation verify that never returns and keeps the old hat" upgrade_refused "$timed_out"
 
 if [ "$own_gh" = yes ]; then
 	if ! command -v gh >/dev/null 2>&1; then
@@ -230,11 +251,11 @@ if [ "$own_gh" = yes ]; then
 	fi
 	if gh auth status --hostname github.com >/dev/null 2>&1; then own_gh_says=$verified; else own_gh_says=$signed_out; fi
 	previous_hat own-gh
-	run env HAT_VERSION=0.1.1 HAT_BIN_DIR="$bin" sh ./install.sh
-	check "install.sh installs v0.1.1 with this machine's gh: $own_gh_says" installed_saying 0.1.1 "$own_gh_says"
+	run env HAT_BIN_DIR="$bin" sh ./install.sh
+	check "install.sh installs v$newest with this machine's gh: $own_gh_says" installed_saying "$newest" "$own_gh_says"
 	old_hat own-gh-upgrade
 	run "$bin/hat" upgrade
-	check "hat upgrade installs the newest release with this machine's gh" upgraded_saying "" "$own_gh_says"
+	check "hat upgrade installs v$newest with this machine's gh" upgraded_saying "$newest" "$own_gh_says"
 fi
 
 echo "$passed passed, $failed failed."
