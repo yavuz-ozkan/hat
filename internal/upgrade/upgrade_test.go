@@ -135,8 +135,8 @@ type fakeReleases struct {
 
 func (f *fakeReleases) LatestTag() (string, error) { return f.tag, nil }
 
-func (f *fakeReleases) CheckProvenance(asset string, _ []byte) (Provenance, error) {
-	f.checked = append(f.checked, asset)
+func (f *fakeReleases) CheckProvenance(tag, asset string, _ []byte) (Provenance, error) {
+	f.checked = append(f.checked, tag+" "+asset)
 	return f.provenance, f.provenanceErr
 }
 

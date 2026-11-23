@@ -22,9 +22,9 @@ type Source interface {
 	// ErrNotPublished when the release has no such file.
 	Fetch(tag, name string) ([]byte, error)
 	// CheckProvenance says whether archive, already matched against
-	// checksums.txt, was built by hat's release workflow. An error means the
-	// check failed and the archive must not be installed.
-	CheckProvenance(asset string, archive []byte) (Provenance, error)
+	// checksums.txt, was built by hat's release workflow from tag. An error
+	// means the check failed and the archive must not be installed.
+	CheckProvenance(tag, asset string, archive []byte) (Provenance, error)
 }
 
 var ErrNotPublished = errors.New("not published in this release")
@@ -35,6 +35,29 @@ type GitHubReleases struct {
 	// to its file storage.
 	Client *http.Client
 	GH     RunGH
+}
+
+// checkReleasesURL refuses a releases URL that a network could alter on the
+// way: anything but https://, except plain http:// to this machine, which is
+// what a test server needs. The installers apply the same rule to the same
+// text, so it's matched as text rather than parsed.
+func checkReleasesURL(releasesURL string) error {
+	if strings.HasPrefix(releasesURL, "https://") {
+		return nil
+	}
+	if authority, ok := strings.CutPrefix(releasesURL, "http://"); ok {
+		authority, _, _ = strings.Cut(authority, "/")
+		for _, host := range []string{"127.0.0.1", "localhost", "[::1]"} {
+			if !strings.Contains(authority, "@") && (authority == host || strings.HasPrefix(authority, host+":")) {
+				return nil
+			}
+		}
+	}
+	rest := releasesURL
+	if _, after, found := strings.Cut(releasesURL, "://"); found {
+		rest = after
+	}
+	return fmt.Errorf("HAT_RELEASES_URL is %q, but it must start with https://, so nothing on the network can change what hat downloads; plain http:// works only for this machine (127.0.0.1, ::1, or localhost). For example: HAT_RELEASES_URL=https://%s", releasesURL, rest)
 }
 
 // ReleasesAt reads releases from releasesURL: DefaultReleasesURL, unless
@@ -51,6 +74,9 @@ func ReleasesAt(releasesURL string) GitHubReleases {
 // /releases/tag/<tag>, without following it. GitHub skips pre-releases there.
 // HEAD matches the installers, which need it (see install.ps1).
 func (g GitHubReleases) LatestTag() (string, error) {
+	if err := checkReleasesURL(g.ReleasesURL); err != nil {
+		return "", err
+	}
 	noFollow := *g.Client
 	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := noFollow.Head(g.ReleasesURL + "/latest")

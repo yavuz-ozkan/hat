@@ -66,7 +66,7 @@ jobs:
         run: sh .github/scripts/install-goreleaser.sh "$RUNNER_TEMP/goreleaser"
       - name: Snapshot build
         run: '"$RUNNER_TEMP/goreleaser/goreleaser" release --snapshot --clean'
-      - name: install.sh and hat upgrade against a fake release
+      - name: install.sh and hat upgrade against a fake release and a stand-in gh
         run: sh .github/scripts/test-installers.sh
       # The Windows job tests these same archives, the way a real release
       # builds every platform on Linux.
@@ -96,9 +96,9 @@ jobs:
         with:
           name: snapshot
           path: dist
-      - name: install.ps1 and hat upgrade against a fake release, in Windows PowerShell 5.1
+      - name: install.ps1 and hat upgrade against a fake release and a stand-in gh, in Windows PowerShell 5.1
         shell: powershell
         run: .github/scripts/test-installers.ps1
-      - name: install.ps1 and hat upgrade against a fake release, in PowerShell 7
+      - name: install.ps1 and hat upgrade against a fake release and a stand-in gh, in PowerShell 7
         shell: pwsh
         run: .github/scripts/test-installers.ps1

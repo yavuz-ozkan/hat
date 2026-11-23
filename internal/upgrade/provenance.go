@@ -2,12 +2,15 @@ package upgrade
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 )
 
 // SignerWorkflow is the only workflow whose attestations hat accepts. The
@@ -38,27 +41,53 @@ var provenanceNotes = map[Provenance]string{
 	ProvenanceVerified:           "gh verified its build provenance: it was built by " + SignerWorkflow + ".",
 	ProvenanceSkippedNotOnGitHub: "Build provenance not checked: HAT_RELEASES_URL isn't a github.com address, and only GitHub releases carry hat's attestations.",
 	ProvenanceSkippedNoGH:        "Build provenance not checked: the GitHub CLI isn't installed. To check it next time, install gh from https://cli.github.com and run gh auth login.",
-	ProvenanceSkippedGHSignedOut: "Build provenance not checked: gh isn't signed in. To check it next time, run gh auth login.",
+	ProvenanceSkippedGHSignedOut: "Build provenance not checked: gh isn't signed in to github.com. To check it next time, run gh auth login --hostname github.com.",
 	ProvenanceSkippedGHTooOld:    "Build provenance not checked: this gh is too old to verify attestations. To check it next time, upgrade gh from https://cli.github.com.",
 }
 
 // RunGH runs the GitHub CLI with args and returns everything it printed and
-// its exit code. err is ErrGHNotInstalled when gh isn't on PATH, and any
-// other error means gh couldn't be started.
+// its exit code. err is ErrGHNotInstalled when gh isn't on PATH,
+// ErrGHTimedOut when it ran past its deadline, and any other error means gh
+// couldn't be started.
 type RunGH func(args ...string) (output []byte, exitCode int, err error)
 
-var ErrGHNotInstalled = errors.New("gh isn't installed")
+var (
+	ErrGHNotInstalled = errors.New("gh isn't installed")
+	ErrGHTimedOut     = errors.New("gh didn't finish in time")
+)
 
-// ghAuthRequired is the exit code gh documents (gh help exit-codes) for a
-// command that needs a sign-in it doesn't have.
-const ghAuthRequired = 4
+// ghDeadline matches the "2 minutes" in ghFailed's message.
+const ghDeadline = 2 * time.Minute
+
+// ghProgram is the only name hat runs gh by. On Windows that's gh.exe: a
+// gh.cmd or gh.bat would run through cmd.exe, which acts on characters in the
+// archive's path, the same reason claude.Find refuses them.
+func ghProgram(goos string) string {
+	if goos == "windows" {
+		return "gh.exe"
+	}
+	return "gh"
+}
 
 func GHOnPath(args ...string) ([]byte, int, error) {
-	gh, err := exec.LookPath("gh")
+	gh, err := exec.LookPath(ghProgram(runtime.GOOS))
 	if err != nil {
 		return nil, 0, ErrGHNotInstalled
 	}
-	output, err := exec.Command(gh, args...).CombinedOutput()
+	return runWithDeadline(ghDeadline, gh, args...)
+}
+
+func runWithDeadline(deadline time.Duration, program string, args ...string) ([]byte, int, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, program, args...)
+	// gh may leave a child holding its output open; without this, a killed gh
+	// could still keep hat waiting.
+	cmd.WaitDelay = 5 * time.Second
+	output, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return output, 0, ErrGHTimedOut
+	}
 	var exited *exec.ExitError
 	if errors.As(err, &exited) {
 		return output, exited.ExitCode(), nil
@@ -70,14 +99,27 @@ func onGitHub(releasesURL string) bool {
 	return strings.HasPrefix(releasesURL, "https://github.com/")
 }
 
-// CheckProvenance asks gh whether hat's release workflow built archive.
-// Without gh, or with gh signed out, it reports the check as skipped: the
-// checksum already matched, and provenance is an extra the person opts into
-// by installing gh.
-func (g GitHubReleases) CheckProvenance(asset string, archive []byte) (Provenance, error) {
+// CheckProvenance asks gh whether hat's release workflow built archive from
+// tag. Without gh, or with gh signed out of github.com, it reports the check
+// as skipped: the checksum already matched, and provenance is an extra the
+// person opts into by installing gh. --hostname github.com keeps a GH_HOST
+// pointing at GitHub Enterprise from sending the check there.
+func (g GitHubReleases) CheckProvenance(tag, asset string, archive []byte) (Provenance, error) {
 	if !onGitHub(g.ReleasesURL) {
 		return ProvenanceSkippedNotOnGitHub, nil
 	}
+	// Only the exit code matters. gh masks the token it shows here, and hat
+	// never reads this output.
+	_, exitCode, err := g.GH("auth", "status", "--hostname", "github.com")
+	switch {
+	case errors.Is(err, ErrGHNotInstalled):
+		return ProvenanceSkippedNoGH, nil
+	case err != nil:
+		return 0, ghFailed(asset, err)
+	case exitCode != 0:
+		return ProvenanceSkippedGHSignedOut, nil
+	}
+
 	dir, err := os.MkdirTemp("", "hat-provenance-")
 	if err != nil {
 		return 0, fmt.Errorf("couldn't save %s where gh can check its build provenance (%v). Check that your temp folder is writable, then run hat upgrade again", asset, err)
@@ -88,22 +130,26 @@ func (g GitHubReleases) CheckProvenance(asset string, archive []byte) (Provenanc
 		return 0, fmt.Errorf("couldn't save %s where gh can check its build provenance (%v). Check that your temp folder is writable, then run hat upgrade again", asset, err)
 	}
 
-	output, exitCode, err := g.GH("attestation", "verify", path, "--repo", Repo, "--signer-workflow", SignerWorkflow)
+	output, exitCode, err := g.GH("attestation", "verify", path, "--hostname", "github.com", "--repo", Repo,
+		"--signer-workflow", SignerWorkflow, "--source-ref", "refs/tags/"+tag)
 	switch {
-	case errors.Is(err, ErrGHNotInstalled):
-		return ProvenanceSkippedNoGH, nil
 	case err != nil:
-		return 0, fmt.Errorf("couldn't start gh to check %s's build provenance (%v), so it wasn't installed. Check that gh --version runs, then run hat upgrade again", asset, err)
+		return 0, ghFailed(asset, err)
 	case exitCode == 0:
 		return ProvenanceVerified, nil
-	case exitCode == ghAuthRequired:
-		return ProvenanceSkippedGHSignedOut, nil
 	case bytes.Contains(output, []byte(`unknown command "attestation"`)):
 		return ProvenanceSkippedGHTooOld, nil
 	}
-	return 0, fmt.Errorf("%s matches its checksum, but gh couldn't verify it was built by %s, so it wasn't installed. gh said: %s. "+
-		"Run hat upgrade again; if gh's sign-in is the problem, run gh auth login first. If it keeps failing, report it at https://github.com/%s/security",
-		asset, SignerWorkflow, oneLine(output), Repo)
+	return 0, fmt.Errorf("%s matches its checksum, but gh couldn't verify it was built by %s from tag %s, so it wasn't installed. gh said: %s. "+
+		"Run hat upgrade again; if gh's sign-in is the problem, run gh auth login --hostname github.com first. If it keeps failing, report it at https://github.com/%s/security",
+		asset, SignerWorkflow, tag, oneLine(output), Repo)
+}
+
+func ghFailed(asset string, err error) error {
+	if errors.Is(err, ErrGHTimedOut) {
+		return fmt.Errorf("gh took longer than 2 minutes to check %s's build provenance, so it wasn't installed. Check your connection, then run hat upgrade again", asset)
+	}
+	return fmt.Errorf("couldn't start gh to check %s's build provenance (%v), so it wasn't installed. Check that gh --version runs, then run hat upgrade again", asset, err)
 }
 
 func oneLine(output []byte) string {

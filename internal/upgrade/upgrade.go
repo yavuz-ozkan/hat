@@ -87,7 +87,7 @@ func Run(src Source, current, exePath string) (Result, error) {
 	if err := verify(asset, archive, checksums); err != nil {
 		return Result{}, err
 	}
-	provenance, err := src.CheckProvenance(asset, archive)
+	provenance, err := src.CheckProvenance(tag, asset, archive)
 	if err != nil {
 		return Result{}, err
 	}

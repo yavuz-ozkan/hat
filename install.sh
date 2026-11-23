@@ -18,11 +18,31 @@ main() {
 		exit 1
 	}
 
+	# Refuses a releases URL a network could alter on the way: anything but
+	# https://, except plain http:// to this machine, which a test server
+	# needs. hat upgrade applies the same rule (upgrade.checkReleasesURL).
+	check_releases_url() {
+		case "$releases" in
+		https://*) return ;;
+		http://*)
+			authority=${releases#http://}
+			authority=${authority%%/*}
+			case "$authority" in
+			*@*) ;;
+			127.0.0.1 | 127.0.0.1:* | localhost | localhost:* | '[::1]' | '[::1]:'*) return ;;
+			esac
+			;;
+		esac
+		fail "HAT_RELEASES_URL is '$releases', but it must start with https://, so nothing on the network can change what this installer downloads; plain http:// works only for this machine (127.0.0.1, ::1, or localhost). For example: HAT_RELEASES_URL=https://${releases#*://}"
+	}
+
 	# Prints the line to show after installing, or fails when gh can't verify
-	# the archive. hat upgrade decides the same way (upgrade.CheckProvenance)
-	# and prints the same lines. Exit code 4 is gh's documented "needs a
-	# sign-in". gh before 2.49, such as Ubuntu 24.04's packaged one, has no
-	# attestation command.
+	# that the archive came from tag $2. hat upgrade decides the same way
+	# (upgrade.CheckProvenance) and prints the same lines. --hostname
+	# github.com keeps a GH_HOST pointing at GitHub Enterprise from sending the
+	# check there. gh before 2.49, such as Ubuntu 24.04's packaged one, has no
+	# attestation command. Exit codes 126 and 127 are the shell saying gh
+	# couldn't be run at all; gh itself never uses them.
 	check_provenance() {
 		case "$releases" in
 		https://github.com/*) ;;
@@ -35,14 +55,24 @@ main() {
 			echo "Build provenance not checked: the GitHub CLI isn't installed. To check it next time, install gh from https://cli.github.com and run gh auth login."
 			return
 		fi
-		said=$(gh attestation verify "$1" --repo "$repo" --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml 2>&1) && code=0 || code=$?
+		# Only the exit code matters, so the output is never read.
+		gh auth status --hostname github.com >/dev/null 2>&1 && code=0 || code=$?
+		case "$code" in
+		0) ;;
+		126 | 127) fail "couldn't start gh to check ${1##*/}'s build provenance (exit $code), so nothing was installed. Check that gh --version runs, then run this again." ;;
+		*)
+			echo "Build provenance not checked: gh isn't signed in to github.com. To check it next time, run gh auth login --hostname github.com."
+			return
+			;;
+		esac
+		said=$(gh attestation verify "$1" --hostname github.com --repo "$repo" --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml --source-ref "refs/tags/$2" 2>&1) && code=0 || code=$?
 		case "$code" in
 		0) echo "gh verified its build provenance: it was built by yavuz-ozkan/hat/.github/workflows/release.yml." ;;
-		4) echo "Build provenance not checked: gh isn't signed in. To check it next time, run gh auth login." ;;
+		126 | 127) fail "couldn't start gh to check ${1##*/}'s build provenance (exit $code), so nothing was installed. Check that gh --version runs, then run this again." ;;
 		*)
 			case "$said" in
 			*'unknown command "attestation"'*) echo "Build provenance not checked: this gh is too old to verify attestations. To check it next time, upgrade gh from https://cli.github.com." ;;
-			*) fail "${1##*/} matches its checksum, but gh couldn't verify it was built by yavuz-ozkan/hat/.github/workflows/release.yml, so nothing was installed. gh said: $(printf '%s' "$said" | tr -s '\n' ' '). Run this again; if gh's sign-in is the problem, run gh auth login first. If it keeps failing, report it at https://github.com/$repo/security." ;;
+			*) fail "${1##*/} matches its checksum, but gh couldn't verify it was built by yavuz-ozkan/hat/.github/workflows/release.yml from tag $2, so nothing was installed. gh said: $(printf '%s' "$said" | tr -s '\n' ' '). Run this again; if gh's sign-in is the problem, run gh auth login --hostname github.com first. If it keeps failing, report it at https://github.com/$repo/security." ;;
 			esac
 			;;
 		esac
@@ -57,6 +87,7 @@ main() {
 	aarch64 | arm64) arch=arm64 ;;
 	*) fail "there's no hat build for a $(uname -m) processor." ;;
 	esac
+	check_releases_url
 
 	if [ -n "${HAT_VERSION:-}" ]; then
 		tag="v${HAT_VERSION#v}"
@@ -94,7 +125,7 @@ main() {
 	(cd "$tmp" && awk -v name="$asset" '$2 == name' checksums.txt | sha256sum -c - >/dev/null 2>&1) ||
 		fail "$asset doesn't match its published checksum, so nothing was installed. Run this again; if it keeps failing, the release is damaged."
 	# fail inside the command substitution only ends that subshell.
-	provenance=$(check_provenance "$tmp/$asset") || exit 1
+	provenance=$(check_provenance "$tmp/$asset" "$tag") || exit 1
 	tar -xzf "$tmp/$asset" -C "$tmp" hat
 
 	mkdir -p "$bin_dir"

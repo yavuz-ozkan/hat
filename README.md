@@ -34,7 +34,7 @@ irm https://raw.githubusercontent.com/yavuz-ozkan/hat/main/install.ps1 | iex
 Both put `hat` in `~/.local/bin` and print the line to add if that folder isn't on your PATH yet. Before installing, they check the download:
 
 - Its SHA-256 must match the release's `checksums.txt`. This check always runs.
-- When the [GitHub CLI](https://cli.github.com) is installed and signed in, `gh attestation verify` must confirm that this repository's Release workflow built the archive. Without gh, or with gh signed out, the installer prints one line saying provenance wasn't checked and installs on the checksum alone. To turn the check on, install gh and run `gh auth login`.
+- When the [GitHub CLI](https://cli.github.com) is installed and signed in to github.com, `gh attestation verify` must confirm that this repository's Release workflow built the archive from the tag being installed. Without gh, or with gh not signed in to github.com, the installer prints one line saying provenance wasn't checked and installs on the checksum alone. To turn the check on, install gh and run `gh auth login --hostname github.com`. On Windows, only `gh.exe` counts; a `gh.cmd` is ignored.
 
 If either check fails, nothing is installed and any hat already there stays as it was. `hat upgrade` makes the same two checks.
 
@@ -170,21 +170,21 @@ Releases are tags. Push a tag like `v0.2.0` and the Release workflow tests it, b
 To check that an archive was built by this repository's workflow:
 
 ```sh
-gh attestation verify hat_0.2.0_linux_amd64.tar.gz --repo yavuz-ozkan/hat --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml
+gh attestation verify hat_0.2.0_linux_amd64.tar.gz --hostname github.com --repo yavuz-ozkan/hat --signer-workflow yavuz-ozkan/hat/.github/workflows/release.yml --source-ref refs/tags/v0.2.0
 ```
 
-This is the check the installers and `hat upgrade` run when gh is signed in.
+This is the check the installers and `hat upgrade` run when gh is signed in to github.com (`gh auth status --hostname github.com`). `--hostname github.com` keeps a `GH_HOST` set for GitHub Enterprise from sending the check there.
 
-`HAT_RELEASES_URL` points both installers and `hat upgrade` at another copy of the releases, such as a mirror or a test server. It defaults to `https://github.com/yavuz-ozkan/hat/releases` and must serve the same paths: `/latest` redirecting to `/tag/<tag>`, and files under `/download/<tag>/`. For an address outside github.com, provenance isn't checked, since only GitHub releases carry the attestations; the checksum still is.
+`HAT_RELEASES_URL` points both installers and `hat upgrade` at another copy of the releases, such as a mirror or a test server. It defaults to `https://github.com/yavuz-ozkan/hat/releases` and must serve the same paths: `/latest` redirecting to `/tag/<tag>`, and files under `/download/<tag>/`. It must start with `https://`; plain `http://` is accepted only for `127.0.0.1`, `::1`, or `localhost`. For an address that doesn't start with `https://github.com/`, provenance isn't checked, since only GitHub releases carry the attestations; the checksum still is.
 
-CI uses it to run both installers and `hat upgrade` against a fake release served from a snapshot build (`internal/fakereleases`): a good release, a tampered archive, a `checksums.txt` missing the archive's line, only pre-releases, and no releases. To run the same tests yourself, from the repository root:
+CI uses it to run both installers and `hat upgrade` against a fake release served from a snapshot build (`internal/fakereleases`): a good release, a tampered archive, a `checksums.txt` missing the archive's line, only pre-releases, and no releases. Then it installs v0.1.1 from github.com with a stand-in gh (`internal/fakegh`) for every provenance outcome: no gh, verified, `GH_HOST` set to an enterprise host, verification failed, not signed in to github.com, too old, and a gh that can't start. To run the same tests yourself, from the repository root, with network access to github.com:
 
 ```sh
 goreleaser release --snapshot --clean
 sh .github/scripts/test-installers.sh
 ```
 
-On Windows, run `.github/scripts/test-installers.ps1` in Windows PowerShell 5.1 or PowerShell 7 instead. Both hide gh from PATH. Add `--real-release` (`-RealRelease` on Windows) to also install v0.1.1 from GitHub with gh hidden, with stand-in gh programs that fail or are too old, and with your own gh.
+On Windows, run `.github/scripts/test-installers.ps1` in Windows PowerShell 5.1 or PowerShell 7 instead. Both hide your own gh from PATH. Add `--own-gh` (`-OwnGh` on Windows) to also install v0.1.1 and run `hat upgrade` with your own gh.
 
 Dependabot opens weekly pull requests for GitHub Actions and Go module updates.
 
